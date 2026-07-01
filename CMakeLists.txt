@@ -3,6 +3,7 @@ project(PDFCompressor VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
 
 # Include PDFium fetch module
 include(cmake/FetchPDFium.cmake)
@@ -19,14 +20,31 @@ find_package(libdeflate CONFIG REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(ZLIB REQUIRED)
 
-# Override JPEG::JPEG to use vcpkg's static lib (not Homebrew's dynamic lib which has ABI version mismatch)
+# Override JPEG::JPEG to use a static lib when possible (avoids ABI mismatches with Homebrew's dynamic lib).
+# Prefer vcpkg's static lib if available; fall back to Homebrew's static lib.
 set(_VCPKG_LIB_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib")
 if(TARGET JPEG::JPEG)
+    if(EXISTS "${_VCPKG_LIB_DIR}/libjpeg.a")
+        set(JPEG_STATIC_PATH "${_VCPKG_LIB_DIR}/libjpeg.a")
+    elseif(EXISTS "/opt/homebrew/lib/libjpeg.a")
+        set(JPEG_STATIC_PATH "/opt/homebrew/lib/libjpeg.a")
+    else()
+        set(JPEG_STATIC_PATH "${_VCPKG_LIB_DIR}/libjpeg.a")
+    endif()
     set_target_properties(JPEG::JPEG PROPERTIES
-        IMPORTED_LOCATION "${_VCPKG_LIB_DIR}/libjpeg.a"
-        IMPORTED_LOCATION_RELEASE "${_VCPKG_LIB_DIR}/libjpeg.a"
-        IMPORTED_LOCATION_DEBUG "${_VCPKG_LIB_DIR}/debug/lib/libjpeg.a"
+        IMPORTED_LOCATION "${JPEG_STATIC_PATH}"
+        IMPORTED_LOCATION_RELEASE "${JPEG_STATIC_PATH}"
+        IMPORTED_LOCATION_DEBUG "${JPEG_STATIC_PATH}"
     )
+endif()
+
+# Resolve turbojpeg static lib path (vcpkg or Homebrew)
+if(EXISTS "${_VCPKG_LIB_DIR}/libturbojpeg.a")
+    set(TURBOJPEG_LIB "${_VCPKG_LIB_DIR}/libturbojpeg.a")
+elseif(EXISTS "/opt/homebrew/lib/libturbojpeg.a")
+    set(TURBOJPEG_LIB "/opt/homebrew/lib/libturbojpeg.a")
+else()
+    find_library(TURBOJPEG_LIB NAMES turbojpeg libturbojpeg)
 endif()
 
 # Core sources (no Qt dependency)
@@ -56,14 +74,18 @@ target_link_libraries(pdfcompress_core PUBLIC
     PNG::PNG
     JPEG::JPEG
     ZLIB::ZLIB
-    "${_VCPKG_LIB_DIR}/libturbojpeg.a"
+    "${TURBOJPEG_LIB}"
     openjp2
     $<IF:$<TARGET_EXISTS:libdeflate::libdeflate_shared>,libdeflate::libdeflate_shared,libdeflate::libdeflate_static>
     pdfium
 )
 
 # Application Executable (Qt-based GUI)
-add_executable(PDFCompressor MACOSX_BUNDLE src/main.cpp)
+add_executable(PDFCompressor MACOSX_BUNDLE
+    src/main.cpp
+    src/DropHandler.cpp
+    src/DropOverlay.cpp
+)
 target_link_libraries(PDFCompressor PRIVATE
     Qt6::Core Qt6::Gui Qt6::Widgets
     pdfcompress_core
