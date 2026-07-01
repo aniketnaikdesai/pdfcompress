@@ -1,0 +1,11 @@
+{
+  "name": "pdf-compressor",
+  "version-string": "1.0.0",
+  "dependencies": [
+    "qpdf",
+    "libpng",
+    "libjpeg-turbo",
+    "openjpeg",
+    "libdeflate"
+  ]
+}
