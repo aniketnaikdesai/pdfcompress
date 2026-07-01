@@ -84,30 +84,47 @@ Or navigate to the `build/` directory in Finder and double-click
 The GUI is a single window with the following controls from top to bottom:
 
 - **Version info bar** — shows QPDF, Qt, and PDFium version
-- **Inspect PDF** button — read-only scan of a PDF's image contents
+- **Inspect PDF** button — read-only scan of PDF image contents
 - **Optimize PDF** button — run the full compression pipeline
 - **JPEG Quality slider** — sets the JPEG quality (1–100, default 70).
   Lower = smaller file, lower quality. Higher = larger file, higher quality.
   The value is read at the moment you click "Optimize PDF".
 - **Results area** — scrollable log of inspection or optimization output
 
+The window also accepts **dragged PDF files** from Finder. When you drag
+files over the window, a blue dashed overlay appears. Drop one or more
+PDFs to load their paths, then click **Inspect PDF** or **Optimize PDF**
+to process them as a batch.
+
+### Drag & Drop
+
+- Drag any number of `.pdf` files from Finder onto the app window.
+- A blue overlay with "Drop PDF(s) here" appears while dragging.
+- On drop, the file paths are listed in the results area.
+- Non-PDF files are silently ignored.
+- After dropping, click a button to process all queued files.
+- Files are processed sequentially in the order they were dropped.
+- Dropped paths are consumed once a button is clicked; subsequent clicks
+  fall back to the file dialog.
+
 ### Inspect PDF
 
-1. Click **Inspect PDF**.
-2. Select a PDF file via the file dialog.
-3. The app scans every page using PDFium, extracts all embedded images,
+1. Drag PDF(s) onto the window, or click **Inspect PDF** and select a
+   file via the file dialog.
+2. The app scans every page using PDFium, extracts all embedded images,
    and displays:
    - Document info (PDF version, page count, file size)
    - Total images found and their combined size
    - Per-image details: dimensions, DPI, color space, bits-per-component,
      compression filter, alpha channel presence
-4. This is a read-only operation — no files are modified.
+3. This is a read-only operation — no files are modified.
 
 ### Optimize PDF
 
 1. Adjust the **JPEG Quality** slider to your preference.
-2. Click **Optimize PDF**.
-3. Select a PDF file. The app writes the compressed result to the same
+2. Drag PDF(s) onto the window, or click **Optimize PDF** and select a
+   file via the file dialog.
+3. Each file is processed independently. Output is written to the same
    directory with the suffix `_optimized` (e.g. `report_optimized.pdf`).
 4. The optimization pipeline:
    - Strips interactive elements (AcroForms, outlines/bookmarks, page
@@ -119,7 +136,7 @@ The GUI is a single window with the following controls from top to bottom:
    - Re-encodes the stream and replaces it in the PDF if the result is
      smaller
    - Writes the output with linearization (fast web view)
-5. Results show:
+5. Results show per-file:
    - Original and optimized file sizes
    - Size reduction percentage
    - Number of images processed
@@ -201,8 +218,11 @@ The results pane reports:
 
 ```
 src/
-  main.cpp                Entry point — QMainWindow with Inspect/Optimize buttons
-                          and JPEG quality slider
+  main.cpp                Entry point — QMainWindow with Inspect/Optimize buttons,
+                          JPEG quality slider, and drag-and-drop setup
+  DropHandler.h/.cpp      Installs event filters on all widgets; accepts .pdf
+                          drags from Finder; emits filesDropped signal
+  DropOverlay.h/.cpp      Blue dashed overlay that appears during drag operations
   core/
     PDFInspector.h/.cpp   PDFium wrapper: opens PDF, extracts image metadata
     ImageAnalyzer.h/.cpp  Pixel analysis: grayscale, entropy, edges,
@@ -240,7 +260,6 @@ The pipeline flow:
   4-channel, but color space metadata is preserved).
 - **JPEG XL** is not yet integrated (listed in the spec but not wired).
 - **JBIG2** is not yet integrated (monochrome uses zlib instead).
-- **No batch processing** yet (single-file only via file dialog).
 - **No before/after preview** yet.
 - **Tests** directory is empty — no automated tests exist.
 
