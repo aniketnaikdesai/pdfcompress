@@ -4,6 +4,8 @@
 #include <QFileDialog>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QSlider>
 #include <QTextEdit>
 #include <QMessageBox>
 #include <qpdf/QPDF.hh>
@@ -44,6 +46,25 @@ int main(int argc, char *argv[]) {
     buttonLayout->addWidget(optimizeButton);
 
     layout->addLayout(buttonLayout);
+
+    // Quality slider
+    auto *qualityLayout = new QHBoxLayout();
+    auto *qualityLabel = new QLabel("JPEG Quality:", centralWidget);
+    qualityLabel->setFixedWidth(100);
+    qualityLayout->addWidget(qualityLabel);
+
+    auto *qualitySlider = new QSlider(Qt::Horizontal, centralWidget);
+    qualitySlider->setRange(1, 100);
+    qualitySlider->setValue(70);
+    qualitySlider->setTickPosition(QSlider::TicksBelow);
+    qualitySlider->setTickInterval(10);
+    qualityLayout->addWidget(qualitySlider, 1);
+
+    auto *qualityValueLabel = new QLabel("70", centralWidget);
+    qualityValueLabel->setFixedWidth(30);
+    qualityLayout->addWidget(qualityValueLabel);
+
+    layout->addLayout(qualityLayout);
 
     // Results area
     auto *resultsText = new QTextEdit(centralWidget);
@@ -91,6 +112,11 @@ int main(int argc, char *argv[]) {
         }
     });
 
+    // Update quality label when slider moves
+    QObject::connect(qualitySlider, &QSlider::valueChanged, [qualityValueLabel](int val) {
+        qualityValueLabel->setText(QString::number(val));
+    });
+
     // Connect Optimize button
     QObject::connect(optimizeButton, &QPushButton::clicked, [&]() {
         QString filePath = QFileDialog::getOpenFileName(
@@ -99,8 +125,9 @@ int main(int argc, char *argv[]) {
         if (filePath.isEmpty()) return;
 
         resultsText->clear();
+        int quality = qualitySlider->value();
         resultsText->append("Starting optimization pipeline for: " + filePath + "\n");
-        resultsText->append("This will aggressively strip interactivity and recompress images...\n");
+        resultsText->append(QString("JPEG Quality: %1\n").arg(quality));
         
         QApplication::processEvents(); // Update UI before heavy work
 
@@ -110,7 +137,7 @@ int main(int argc, char *argv[]) {
 
         try {
             pdfcompress::PDFOptimizer optimizer;
-            auto result = optimizer.optimize(filePath.toStdString(), outPath.toStdString(), pdfcompress::CompressionProfile::Balanced);
+            auto result = optimizer.optimize(filePath.toStdString(), outPath.toStdString(), pdfcompress::CompressionProfile::Balanced, quality);
 
             if (result.success) {
                 resultsText->append(QString("\n=== Optimization Successful ==="));

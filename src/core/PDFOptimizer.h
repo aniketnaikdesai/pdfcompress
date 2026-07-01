@@ -27,7 +27,8 @@ public:
     /// @return Results of the optimization.
     OptimizationResult optimize(const std::string& inputPath, 
                                 const std::string& outputPath,
-                                CompressionProfile profile = CompressionProfile::Balanced);
+                                CompressionProfile profile = CompressionProfile::Balanced,
+                                int qualityHint = 0);
                                 
 private:
     DecisionEngine m_decisionEngine;
