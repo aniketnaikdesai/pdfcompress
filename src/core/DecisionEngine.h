@@ -24,7 +24,8 @@ public:
     std::vector<uint8_t> compress(const uint8_t* pixels, 
                                   int width, int height, int channels,
                                   const AnalysisResult& analysis,
-                                  StreamFilter& outFilter);
+                                  StreamFilter& outFilter,
+                                  int qualityHint = 0);
 
 private:
     CompressionProfile m_profile;
@@ -32,6 +33,7 @@ private:
     // Codec instances
     std::unique_ptr<ImageCodec> m_jpegCodec;
     std::unique_ptr<ImageCodec> m_pngCodec;
+    std::unique_ptr<ImageCodec> m_zlibCodec;
     std::unique_ptr<ImageCodec> m_jp2Codec;
 };
 

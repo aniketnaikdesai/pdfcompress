@@ -7,6 +7,7 @@
 #include <qpdf/QPDFObjectHandle.hh>
 
 #include <turbojpeg.h>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <set>
@@ -18,7 +19,8 @@ PDFOptimizer::PDFOptimizer() {
 
 OptimizationResult PDFOptimizer::optimize(const std::string& inputPath, 
                                           const std::string& outputPath,
-                                          CompressionProfile profile) {
+                                          CompressionProfile profile,
+                                          int qualityHint) {
     OptimizationResult result;
     namespace fs = std::filesystem;
 
@@ -92,18 +94,20 @@ OptimizationResult PDFOptimizer::optimize(const std::string& inputPath,
                 }
 
                 std::vector<uint8_t> rawPixels;
+                ImageMetadata meta;
 
                 // Decompress the stream to raw pixels for analysis
                 if (filter == "/DCTDecode") {
                     // It's a JPEG. Use TurboJPEG to decompress.
-                    auto streamData = imageObj.getStreamData(qpdf_dl_none);
-                    if (streamData) {
+                    auto rawStreamData = imageObj.getRawStreamData();
+                    if (rawStreamData) {
+                        meta.compressedSize = rawStreamData->getSize();
                         tjhandle tj = tjInitDecompress();
                         int w, h, subsamp, colorspace;
-                        if (tjDecompressHeader3(tj, streamData->getBuffer(), streamData->getSize(), &w, &h, &subsamp, &colorspace) == 0) {
+                        if (tjDecompressHeader3(tj, rawStreamData->getBuffer(), rawStreamData->getSize(), &w, &h, &subsamp, &colorspace) == 0) {
                             rawPixels.resize(w * h * channels);
                             int pixelFormat = (channels == 1) ? TJPF_GRAY : TJPF_RGB;
-                            if (tjDecompress2(tj, streamData->getBuffer(), streamData->getSize(), rawPixels.data(), w, 0, h, pixelFormat, 0) != 0) {
+                            if (tjDecompress2(tj, rawStreamData->getBuffer(), rawStreamData->getSize(), rawPixels.data(), w, 0, h, pixelFormat, 0) != 0) {
                                 rawPixels.clear();
                             }
                         }
@@ -111,18 +115,20 @@ OptimizationResult PDFOptimizer::optimize(const std::string& inputPath,
                     }
                 } else if (filter == "/FlateDecode") {
                     // PNG / Zlib. QPDF can uncompress this natively.
-                    auto streamData = imageObj.getStreamData(qpdf_dl_all);
-                    if (streamData) {
-                        rawPixels.assign(streamData->getBuffer(), streamData->getBuffer() + streamData->getSize());
+                    auto rawStreamData = imageObj.getRawStreamData();
+                    if (rawStreamData) {
+                        meta.compressedSize = rawStreamData->getSize();
+                        auto streamData = imageObj.getStreamData(qpdf_dl_all);
+                        if (streamData) {
+                            rawPixels.assign(streamData->getBuffer(), streamData->getBuffer() + streamData->getSize());
+                        }
                     }
                 }
 
                 // If we successfully got raw pixels, we can re-compress
                 if (!rawPixels.empty() && rawPixels.size() >= width * height * channels) {
-                    ImageMetadata meta;
                     meta.widthPx = width;
                     meta.heightPx = height;
-                    meta.compressedSize = imageObj.getStreamData(qpdf_dl_none)->getSize();
                     meta.uncompressedSize = rawPixels.size();
                     
                     // Analyze
@@ -130,25 +136,28 @@ OptimizationResult PDFOptimizer::optimize(const std::string& inputPath,
 
                     // Re-compress
                     StreamFilter outFilter;
-                    auto compressedBytes = m_decisionEngine.compress(rawPixels.data(), width, height, channels, analysis, outFilter);
+                    auto compressedBytes = m_decisionEngine.compress(rawPixels.data(), width, height, channels, analysis, outFilter, qualityHint);
 
                     if (!compressedBytes.empty() && compressedBytes.size() < meta.compressedSize) {
                         // Replace stream data
-                        auto buffer = std::make_shared<Buffer>(compressedBytes.data(), compressedBytes.size());
+                        auto buffer = std::make_shared<Buffer>(compressedBytes.size());
+                        memcpy(buffer->getBuffer(), compressedBytes.data(), compressedBytes.size());
+                        QPDFObjectHandle filterName;
+                        if (outFilter == StreamFilter::DCTDecode) {
+                            filterName = QPDFObjectHandle::newName("/DCTDecode");
+                        } else if (outFilter == StreamFilter::FlateDecode) {
+                            filterName = QPDFObjectHandle::newName("/FlateDecode");
+                        } else if (outFilter == StreamFilter::JPXDecode) {
+                            filterName = QPDFObjectHandle::newName("/JPXDecode");
+                        }
                         imageObj.replaceStreamData(
                             buffer,
-                            QPDFObjectHandle::newNull(),
+                            filterName,
                             QPDFObjectHandle::newNull()
                         );
 
-                        // Update filter in dictionary
-                        if (outFilter == StreamFilter::DCTDecode) {
-                            dict.replaceKey("/Filter", QPDFObjectHandle::newName("/DCTDecode"));
-                        } else if (outFilter == StreamFilter::FlateDecode) {
-                            dict.replaceKey("/Filter", QPDFObjectHandle::newName("/FlateDecode"));
-                        } else if (outFilter == StreamFilter::JPXDecode) {
-                            dict.replaceKey("/Filter", QPDFObjectHandle::newName("/JPXDecode"));
-                        }
+                        // Update filter in dictionary for PDF readers
+                        dict.replaceKey("/Filter", filterName);
                         
                         result.imagesProcessed++;
                     }

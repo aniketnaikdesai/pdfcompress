@@ -1,6 +1,7 @@
 #include "DecisionEngine.h"
 #include "../codecs/JpegCodec.h"
 #include "../codecs/PngCodec.h"
+#include "../codecs/ZlibCodec.h"
 #include "../codecs/Jp2Codec.h"
 #include <iostream>
 
@@ -10,13 +11,15 @@ DecisionEngine::DecisionEngine(CompressionProfile profile)
     : m_profile(profile) {
     m_jpegCodec = std::make_unique<JpegCodec>();
     m_pngCodec = std::make_unique<PngCodec>();
+    m_zlibCodec = std::make_unique<ZlibCodec>();
     m_jp2Codec = std::make_unique<Jp2Codec>();
 }
 
 std::vector<uint8_t> DecisionEngine::compress(const uint8_t* pixels, 
                                               int width, int height, int channels,
                                               const AnalysisResult& analysis,
-                                              StreamFilter& outFilter) {
+                                              StreamFilter& outFilter,
+                                              int qualityHint) {
     if (!pixels || width <= 0 || height <= 0) return {};
 
     CompressionParams params;
@@ -24,6 +27,7 @@ std::vector<uint8_t> DecisionEngine::compress(const uint8_t* pixels,
     params.height = height;
     params.channels = channels;
     params.profile = m_profile;
+    params.qualityHint = qualityHint;
     
     ImageCodec* selectedCodec = nullptr;
 
@@ -44,9 +48,15 @@ std::vector<uint8_t> DecisionEngine::compress(const uint8_t* pixels,
 
         case ImageClassification::Screenshot:
         case ImageClassification::LineArt:
-            // Crisp edges and flat colors -> PNG (FlateDecode)
-            selectedCodec = m_pngCodec.get();
-            outFilter = StreamFilter::FlateDecode;
+            // Use JPEG at user's quality setting for large size reduction.
+            // For lossless scenarios (MaxQuality), fall back to zlib.
+            if (m_profile == CompressionProfile::MaxQuality && qualityHint <= 0) {
+                selectedCodec = m_zlibCodec.get();
+                outFilter = StreamFilter::FlateDecode;
+            } else {
+                selectedCodec = m_jpegCodec.get();
+                outFilter = StreamFilter::DCTDecode;
+            }
             break;
 
         case ImageClassification::ScannedText:
@@ -56,8 +66,8 @@ std::vector<uint8_t> DecisionEngine::compress(const uint8_t* pixels,
             break;
 
         case ImageClassification::Monochrome:
-            // Pure B&W -> PNG (until JBIG2 is implemented)
-            selectedCodec = m_pngCodec.get();
+            // Pure B&W -> zlib (lossless). JPEG would introduce artifacts.
+            selectedCodec = m_zlibCodec.get();
             outFilter = StreamFilter::FlateDecode;
             break;
 
@@ -72,9 +82,6 @@ std::vector<uint8_t> DecisionEngine::compress(const uint8_t* pixels,
         std::cerr << "DecisionEngine: No codec selected\n";
         return {};
     }
-
-    // std::cout << "DecisionEngine: Selected " << selectedCodec->name() 
-    //           << " for " << analysis.classificationName() << "\n";
 
     return selectedCodec->encode(pixels, params);
 }
