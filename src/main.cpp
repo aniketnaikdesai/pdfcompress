@@ -12,6 +12,8 @@
 
 #include "core/PDFInspector.h"
 #include "core/PDFOptimizer.h"
+#include "DropHandler.h"
+#include "DropOverlay.h"
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
@@ -72,43 +74,58 @@ int main(int argc, char *argv[]) {
     resultsText->setPlaceholderText("Select an action...");
     layout->addWidget(resultsText);
 
+    // Dropped file paths (filled by drag & drop, consumed by buttons)
+    QStringList droppedFiles;
+
     // Connect Inspect button
     QObject::connect(openButton, &QPushButton::clicked, [&]() {
-        QString filePath = QFileDialog::getOpenFileName(
-            &mainWindow, "Select PDF", QString(), "PDF Files (*.pdf)");
+        QStringList files;
+        if (!droppedFiles.isEmpty()) {
+            files = droppedFiles;
+            droppedFiles.clear();
+        } else {
+            QString f = QFileDialog::getOpenFileName(
+                &mainWindow, "Select PDF", QString(), "PDF Files (*.pdf)");
+            if (!f.isEmpty()) files.append(f);
+        }
 
-        if (filePath.isEmpty()) return;
+        if (files.isEmpty()) return;
 
         resultsText->clear();
-        resultsText->append("Inspecting: " + filePath + "\n");
+        resultsText->append(QString("Inspecting %1 file(s)...\n").arg(files.size()));
 
-        try {
-            pdfcompress::PDFInspector inspector;
-            auto info = inspector.inspect(filePath.toStdString(),
-                [&](int current, int total) {
-                    resultsText->append(
-                        QString("  Scanning page %1 / %2...")
-                            .arg(current).arg(total));
-                });
+        for (const auto& filePath : files) {
+            resultsText->append(QString("\n--- %1 ---\n").arg(filePath));
+            QApplication::processEvents();
 
-            resultsText->append(QString("\n=== Document Info ==="));
-            resultsText->append(QString("  PDF Version: %1").arg(info.pdfVersion.c_str()));
-            resultsText->append(QString("  Pages: %1").arg(info.pageCount));
-            resultsText->append(QString("  File Size: %1 KB").arg(info.fileSizeBytes / 1024));
-            resultsText->append(QString("  Images Found: %1").arg(info.imageCount()));
-            resultsText->append(QString("  Total Image Bytes: %1 KB")
-                                    .arg(info.totalImageBytes() / 1024));
+            try {
+                pdfcompress::PDFInspector inspector;
+                auto info = inspector.inspect(filePath.toStdString(),
+                    [&](int current, int total) {
+                        resultsText->append(
+                            QString("  Scanning page %1 / %2...")
+                                .arg(current).arg(total));
+                    });
 
-            resultsText->append(QString("\n=== Image Details ==="));
-            for (const auto& img : info.images) {
-                resultsText->append(QString::fromStdString("  " + img.summary()));
+                resultsText->append(QString("\n=== Document Info ==="));
+                resultsText->append(QString("  PDF Version: %1").arg(info.pdfVersion.c_str()));
+                resultsText->append(QString("  Pages: %1").arg(info.pageCount));
+                resultsText->append(QString("  File Size: %1 KB").arg(info.fileSizeBytes / 1024));
+                resultsText->append(QString("  Images Found: %1").arg(info.imageCount()));
+                resultsText->append(QString("  Total Image Bytes: %1 KB")
+                                        .arg(info.totalImageBytes() / 1024));
+
+                resultsText->append(QString("\n=== Image Details ==="));
+                for (const auto& img : info.images) {
+                    resultsText->append(QString::fromStdString("  " + img.summary()));
+                }
+
+                resultsText->append("\nInspection complete.");
+
+            } catch (const std::exception& e) {
+                QMessageBox::critical(&mainWindow, "Error",
+                                      QString("Failed to inspect %1:\n%2").arg(filePath, e.what()));
             }
-
-            resultsText->append("\nInspection complete.");
-
-        } catch (const std::exception& e) {
-            QMessageBox::critical(&mainWindow, "Error",
-                                  QString("Failed to inspect PDF:\n%1").arg(e.what()));
         }
     });
 
@@ -119,46 +136,72 @@ int main(int argc, char *argv[]) {
 
     // Connect Optimize button
     QObject::connect(optimizeButton, &QPushButton::clicked, [&]() {
-        QString filePath = QFileDialog::getOpenFileName(
-            &mainWindow, "Select PDF to Optimize", QString(), "PDF Files (*.pdf)");
+        QStringList files;
+        if (!droppedFiles.isEmpty()) {
+            files = droppedFiles;
+            droppedFiles.clear();
+        } else {
+            QString f = QFileDialog::getOpenFileName(
+                &mainWindow, "Select PDF to Optimize", QString(), "PDF Files (*.pdf)");
+            if (!f.isEmpty()) files.append(f);
+        }
 
-        if (filePath.isEmpty()) return;
+        if (files.isEmpty()) return;
 
         resultsText->clear();
         int quality = qualitySlider->value();
-        resultsText->append("Starting optimization pipeline for: " + filePath + "\n");
-        resultsText->append(QString("JPEG Quality: %1\n").arg(quality));
-        
-        QApplication::processEvents(); // Update UI before heavy work
+        resultsText->append(QString("Batch optimizing %1 file(s)...\n").arg(files.size()));
+        resultsText->append(QString("JPEG Quality: %1\n\n").arg(quality));
 
-        // Output to the same directory with _optimized
-        QString outPath = filePath;
-        outPath.insert(outPath.lastIndexOf('.'), "_optimized");
+        for (const auto& filePath : files) {
+            resultsText->append(QString("--- %1 ---\n").arg(filePath));
+            QApplication::processEvents();
 
-        try {
-            pdfcompress::PDFOptimizer optimizer;
-            auto result = optimizer.optimize(filePath.toStdString(), outPath.toStdString(), pdfcompress::CompressionProfile::Balanced, quality);
+            QString outPath = filePath;
+            outPath.insert(outPath.lastIndexOf('.'), "_optimized");
 
-            if (result.success) {
-                resultsText->append(QString("\n=== Optimization Successful ==="));
-                resultsText->append(QString("  Output: %1").arg(outPath));
-                resultsText->append(QString("  Original Size: %1 KB").arg(result.originalSizeBytes / 1024));
-                resultsText->append(QString("  Optimized Size: %1 KB").arg(result.optimizedSizeBytes / 1024));
-                
-                double savings = 100.0 * (1.0 - static_cast<double>(result.optimizedSizeBytes) / result.originalSizeBytes);
-                resultsText->append(QString("  Size Reduction: %1%").arg(savings, 0, 'f', 1));
-                
-                resultsText->append(QString("\n  Images Processed: %1").arg(result.imagesProcessed));
-                resultsText->append(QString("  Annotations Removed: %1").arg(result.annotationsRemoved));
-                resultsText->append(QString("  Bookmarks Removed: %1").arg(result.bookmarksRemoved));
-            } else {
-                resultsText->append(QString("\nOptimization failed: %1").arg(result.errorMessage.c_str()));
+            try {
+                pdfcompress::PDFOptimizer optimizer;
+                auto result = optimizer.optimize(filePath.toStdString(), outPath.toStdString(), pdfcompress::CompressionProfile::Balanced, quality);
+
+                if (result.success) {
+                    resultsText->append(QString("  Output: %1\n").arg(outPath));
+                    resultsText->append(QString("  Original: %1 KB  Optimized: %2 KB")
+                                            .arg(result.originalSizeBytes / 1024)
+                                            .arg(result.optimizedSizeBytes / 1024));
+                    
+                    double savings = 100.0 * (1.0 - static_cast<double>(result.optimizedSizeBytes) / result.originalSizeBytes);
+                    resultsText->append(QString("  Reduction: %1%").arg(savings, 0, 'f', 1));
+                    
+                    resultsText->append(QString("  Images: %1  Annotations: %2  Bookmarks: %3\n")
+                                            .arg(result.imagesProcessed)
+                                            .arg(result.annotationsRemoved)
+                                            .arg(result.bookmarksRemoved));
+                } else {
+                    resultsText->append(QString("  FAILED: %1\n").arg(result.errorMessage.c_str()));
+                }
+            } catch (const std::exception& e) {
+                QMessageBox::critical(&mainWindow, "Error",
+                                      QString("Failed to optimize %1:\n%2").arg(filePath, e.what()));
             }
-        } catch (const std::exception& e) {
-            QMessageBox::critical(&mainWindow, "Error",
-                                  QString("Failed to optimize PDF:\n%1").arg(e.what()));
         }
+
+        resultsText->append("\nBatch complete.");
     });
+
+    // Drag & drop support
+    auto* dropOverlay = new DropOverlay(centralWidget);
+    auto* dropHandler = new DropHandler(&mainWindow, centralWidget, dropOverlay, &mainWindow);
+    QObject::connect(dropHandler, &DropHandler::filesDropped,
+        [resultsText, &droppedFiles](const QStringList& paths) {
+            droppedFiles = paths;
+            resultsText->clear();
+            resultsText->append(QString("Dropped %1 file(s):").arg(paths.size()));
+            for (const auto& path : paths) {
+                resultsText->append("  " + path);
+            }
+            resultsText->append("\nClick Inspect or Optimize to process.");
+        });
 
     mainWindow.setCentralWidget(centralWidget);
     mainWindow.show();
