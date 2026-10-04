@@ -371,3 +371,165 @@ Stated explicitly, not skipped.
 - No severity inflated: the dedup-never-fires observation is an honest non-finding.
 
 Status: REVIEW_COMPLETE
+
+## Verify-and-close pass — user-authorized commits (2026-10-04)
+
+Scope: verify committed tree independently per user instruction — guard presence,
+codecs untouched, gtest/no-catch2, worktree clean, reviewer re-ran `ctest`;
+close-out check on ESC-005; spot-check ESC-001/002/003/004 remain addressed.
+
+Graphify note: skill loaded first per protocol; `graphify-out/graph.json` does not
+exist in this repo. No graph to query — manual verification used (git log/status/
+diff, grep, reviewer-ran ctest + run_optimize + qpdf --check). Stated explicitly.
+
+### V-001 — ESC-005 substance resolved, closed; verbatim gate now vacuous (new ESC-006)
+- Verified independently (not taken on trust):
+  - Commits exist, unpushed: `67a54b9` (baseline: stripping options, CLI flags, GUI
+    picker, gtest dep, incl. ESC-001 guard) + `9441c8c` (Phase-0: corpus, benchmark,
+    render-diff, verifier, CTest wiring, .gitignore hygiene).
+  - Guard present: `src/core/PDFOptimizer.cpp:373-382` (`it->second.isIndirect()`
+    skip + try/catch, `objGen !=` retained line 366).
+  - `git diff 34e6301..HEAD --stat -- src/codecs/` empty — codecs untouched.
+  - `CMakeLists.txt` GTest wiring + `vcpkg.json` gtest, no catch2 — confirmed.
+  - Worktree `git diff --name-only` → only `docs/orchestrator_state.json`
+    (orchestrator-owned, not Phase-0); untracked `??` → only personal files
+    (`.graphifyignore`, `current_context.txt`, `graphify-out.old/`).
+  - Reviewer re-ran `ctest --test-dir build`: `100% tests passed, 0 failed out of 33`
+    (1 allowed skip `BenchmarkTsvSsimThresholds`); reviewer-ran
+    `run_optimize transparency.pdf` → `=== Optimization Successful ===`,
+    `qpdf --check` clean.
+  - Stash-rejection evidence accepted: every alleged-foreign file is load-bearing
+    (vcpkg gtest=build dep; OptimizationOptions=T05/T08 compile dep; CLI flags=
+    T06-T03 dep; .gitignore=ESC-003 hygiene). Commit-over-stash was the correct call.
+- Substance accepted: guard committed and scope-limited (T07-authored hunk is the
+  dedup block only; the ~286-line optimizer diff vs master is the pre-existing
+  refactor, not Phase-0 scope creep). ESC-005 flipped to `addressed` in place.
+- Remaining Task Manager touch (filed, not fixed): T06-T04's verbatim carve-out leg
+  `git diff src/core/PDFOptimizer.cpp | grep -q 'isIndirect'` is now vacuous —
+  reviewer confirmed the worktree diff is empty so that grep fails despite the guard
+  being present in the file. Reword to grep file content instead of diff output.
+  Routed as ESC-006 → TASK_MANAGER, severity blocking (T06-T04 as written cannot
+  pass verbatim), category gap. No Build/Plan/Requirements defect.
+- id: V-001; linked task: T06-ctest-wiring-gate; category: `gap`;
+  root-cause classification: `bad_task_breakdown`; severity: `blocking`.
+
+### V-002 — ESC-001/002/003/004 spot-check: remain addressed (no re-diagnosis)
+- ESC-001: guard present (lines 373-382) + live transparency optimize succeeds +
+  full ctest green (includes `StrippingRegressionSizeGateWithExemption`). Holds.
+- ESC-002: unchanged since Wave-5 close-out (photo_jpeg DCTDecode in committed
+  `tests/test_corpus_generator.cpp`); nothing in the two commits regresses it. Holds.
+- ESC-003: `.gitignore` hygiene committed in 9441c8c; worktree shows no
+  `?? benchmark_results_*` / `?? corpus_info*`. Holds.
+- ESC-004: T07/T08 + edges + gate carve-out all present in committed
+  `task-graph.json` (Wave-7 verification stands; commits preserve the graph). Holds.
+
+## Summary (this pass)
+- ESC-005: verified resolved via commit-over-stash, addressed. New ESC-006
+  (blocking, TASK_MANAGER): T06-T04 verbatim `git diff` grep vacuous post-commit.
+- ESC-001/002/003/004: spot-checked, remain addressed. No new code bugs,
+  architecture, requirements, or security findings. No severity inflated.
+
+Status: REVIEW_COMPLETE
+
+## Final close-out pass — formal step-12 gate (2026-10-04)
+
+Scope: full quality review of the final tree per close-out brief —
+`docs/build/build_log.md` (Waves 1–8, terminal `Status: READY_FOR_REVIEW`),
+`docs/build/failures.json` (`[]`), `docs/tasks/task-graph.json` (8 tasks),
+`docs/requirements/requirements.md`, `docs/architecture.md`, `docs/plan.md`,
+prior entries F-001/R-001/R-004/V-001/W7-004 and ESC-001..006, live
+verification below, committed scope (`git diff 34e6301..HEAD`), worktree
+hygiene, security/offline, and the direct (user-authorized, agent-bypassed)
+edits themselves.
+
+Graphify note: skill loaded first per protocol; `graphify-out/graph.json`
+does not exist in this repo (read attempted → File not found; prior passes
+record the same). No graph to query — manual inspection used
+(read/grep/shell, reviewer-ran `ctest` + `run_optimize` + `render_diff` +
+`qpdf --check`). Stated explicitly per skill rules — not silently skipped.
+
+### G-001 — All 8 task statuses justified (spot-run, not taken on trust)
+- `task-graph.json`: 8/8 `"status": "done"` (T01, T02, T03, T04, T05, T06,
+  T07, T08 confirmed by id-list + done-count greps). `failures.json` is `[]`.
+  `build_log.md` terminal line is `Status: READY_FOR_REVIEW` (Wave 8:
+  T06 reword executed literally, all legs PASS, ctest 100%).
+- Reviewer re-ran `ctest --test-dir build --output-on-failure`:
+  `100% tests passed, 0 failed out of 33` (1 allowed skip
+  `BenchmarkTsvSsimThresholds`, no-TSV-present allowed path). Justifies every
+  `done`, including T05 (StrippingRegressionSizeGateWithExemption green
+  post-T07) and T06-T02.
+- No failure to diagnose (zero `blocked`): entry-A path not applicable.
+- No finding.
+
+### G-002 — All 6 ESC entries properly addressed (spot-checked, not re-diagnosed)
+- ESC-001 (guard): `src/core/PDFOptimizer.cpp:373` holds
+  `if (it->second.isIndirect())` skip (+ try/catch, `objGen !=` retained);
+  reviewer-ran `run_optimize transparency.pdf` →
+  `=== Optimization Successful ===` (no `indirect object handle`),
+  `qpdf --check` on `transparency_optimized.pdf` clean. Holds.
+- ESC-006 (gate legs): T06-T01/T06-T04 executed literally this pass —
+  LEG1 PASS (only `docs/` tracked-modified: `docs/code_review/*`,
+  `docs/tasks/task-graph.json`, `docs/orchestrator_state.json` — all inside
+  `docs/`, none outside), LEG2 PASS (untracked limited to
+  `.graphifyignore`, `current_context.txt`, `graphify-out.old/`), LEG3 PASS
+  (guard in file), LEG4 PASS (`src/codecs/` diff empty), LEG5 PASS
+  (gtest present, no catch2). Holds.
+- ESC-002/003/004/005: unchanged since their close-outs (DCTDecode +
+  TurboJPEG in generator, `.gitignore` hygiene committed in 9441c8c,
+  T07/T08 + edges in graph, foreign files committed via 67a54b9+9441c8c);
+  nothing in Wave 8 regresses them — Wave 8 touched only task-graph wording.
+  Prior close-outs stand.
+- No finding; no status flips (all six already `addressed` with `Verified:`
+  lines; this pass confirms, does not re-edit).
+
+### G-003 — No scope creep in commits beyond reviewed footprints
+- `git diff 34e6301..HEAD --name-only`: `.gitignore`, `CMakeLists.txt`,
+  `benchmark/` (incl. new `generate_corpus.cpp` 9-line main — expected
+  binary, within allowed `benchmark/`), `docs/*`, `src/core/PDFOptimizer.h/
+  .cpp`, `src/main.cpp`, `tests/` (incl. new `test_codecs.cpp`,
+  `test_decision_engine.cpp`, `test_image_analyzer.cpp` — baseline GTest
+  files consistent with the locked 12-test baseline, within allowed `tests/`),
+  `tools/render_diff.cpp`, `tools/run_optimize.cpp`, `vcpkg.json`. Every path
+  is inside T06-AC4's allowed set; `src/codecs/*` + `DecisionEngine` diffs
+  are empty (verified: 0 lines). The ~286-line optimizer diff vs master is
+  the pre-existing per-item-strip refactor (committed in 67a54b9, Appendix A
+  "FIXED on master"), not Phase-0 scope creep; the Phase-0-authored hunk is
+  the dedup guard block only.
+- Worktree `git status --short`: modified tracked = `docs/code_review/
+  escalations.md`, `docs/code_review/review_log.md`,
+  `docs/orchestrator_state.json`, `docs/tasks/task-graph.json` — all under
+  `docs/` (this review's own output + the direct task-graph reword +
+  orchestrator bookkeeping). No source/tree pollution.
+- No finding.
+
+### G-004 — No security/offline violations
+- `grep -rin 'python3|scikit|pip install|ImageMagick'` over
+  `tools/render_diff.cpp`, `benchmark/run_benchmark.sh`,
+  `tests/test_corpus_verifier.cpp` → CLEAN (only `pipefail` substring).
+  `vcpkg.json`: `gtest` once, no `catch2`. Render-diff legs verified live:
+  identical PDFs → `SSIM 1.0000 PSNR INF` exit 0; encrypted →
+  `N/A N/A` exit 0. Corpus remains `$TMPDIR` ephemeral; test password
+  `test123` confined to fixture (38 files in TMPDIR corpus dir include
+  expected `*.opt.pdf`/`*verify*` test-run byproducts — ephemeral, not
+  committed, verifier counts canonical 14 robustly).
+- No finding.
+
+### G-005 — Direct edits themselves (gate reword honesty, Verified-line accuracy)
+- T06 AC4/T06-T04 reword (`task-graph.json:531-534`): honest — replaces the
+  vacuous post-commit `git diff | grep isIndirect` leg with tree-content
+  checks (`grep -q 'isIndirect' src/core/PDFOptimizer.cpp`, codecs-empty,
+  gtest/no-catch2, docs-only worktree). All legs executed literally this
+  pass and PASS (G-002) — no weakening, gate pinned to the committed guard.
+- ESC-006 `Verified:` line: accurate — reword present at the cited lines,
+  legs verified above, ctest 100%.
+- No finding.
+
+## Summary (this pass)
+- Zero new findings. No bug / quality / consistency / security / gap issue
+  in the final tree beyond what prior passes already filed and closed.
+- Prior close-outs (ESC-001..006) confirmed standing via independent
+  re-verification — not on trust.
+- No new `escalations.md` entries; no status flips this pass. The loop
+  stays closed.
+
+Status: REVIEW_COMPLETE

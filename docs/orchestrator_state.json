@@ -1,9 +1,9 @@
 {
-  "current_stage": "paused_user_input",
+  "current_stage": "code_reviewer",
   "invocation_reason": "normal_progression",
   "plan_validator_retries": 0,
-  "pending": {"kind": "code_review_escalations", "targets": ["TASK_MANAGER"], "ids": ["ESC-005"]},
-  "last_invoked": {"agent": "code_reviewer", "at": "2026-10-04T03:05:00Z", "owned_mtimes_before": {}},
-  "last_updated": "2026-10-04T03:05:00Z",
-  "last_status": "REVIEW_COMPLETE_WITH_ESCALATIONS_3"
+  "pending": null,
+  "last_invoked": {"agent": "code_reviewer", "at": "2026-10-04T03:30:00Z", "owned_mtimes_before": {}},
+  "last_updated": "2026-10-04T03:30:00Z",
+  "last_status": "PIPELINE_COMPLETE"
 }

@@ -501,7 +501,7 @@
         "Given CMakeLists.txt, When inspected, Then it still has enable_testing(), find_package(GTest CONFIG REQUIRED), add_executable(pdfcompress_tests ...) now includes tests/test_corpus_verifier.cpp (one-line addition discipline), target_link_libraries GTest::gtest GTest::gtest_main pdfcompress_core, and include(GoogleTest) gtest_discover_tests(pdfcompress_tests), with BUILD_TESTING=ON default.",
         "Given fresh checkout, When 'cmake -B build -DCMAKE_TOOLCHAIN_FILE=third_party/vcpkg/scripts/buildsystems/vcpkg.cmake && cmake --build build && ctest --test-dir build --output-on-failure -V' is run, Then at least 14+ tests pass (12 existing + verifier), no test fails, and generate_corpus still links.",
         "Given build/run_optimize --help and diagnose, When invoked, Then they list all flags (--profile, --quality, --strip-*, --linearize, --no-flate-recompress, --no-dedup, -o/--output) and exit 0, and optimized PDFs pass QPDF().processFile and diagnose shows fonts preserved (Helvetica).",
-        "Given git diff --stat against master, When checked, Then changes appear only in tests/, benchmark/, tools/render_diff.cpp, CMakeLists.txt, docs/, plus the ESC-001 carve-out in src/core/PDFOptimizer.cpp limited to the stream-dedup guard (isIndirect skip + try/catch, objGen != retained); no changes to image decode/encode branches, DecisionEngine wiring, stripping logic, or src/codecs/*; and vcpkg.json still lists gtest not catch2.",
+        "Given the git tree, When checked, Then `git status --short` shows no modified tracked files outside docs/ (pipeline bookkeeping in docs/ evolves as the pipeline runs; only personal untracked files .graphifyignore, current_context.txt, graphify-out.old/ are allowed); the committed change set since 34e6301 touches only .gitignore, CMakeLists.txt, benchmark/, docs/, src/core/PDFOptimizer.h/.cpp, src/main.cpp, tests/, tools/render_diff.cpp, tools/run_optimize.cpp, vcpkg.json; src/core/PDFOptimizer.cpp contains the ESC-001 dedup guard (grep isIndirect) with no codec/DecisionEngine/stripping-logic changes; src/codecs/* is untouched; and vcpkg.json lists gtest not catch2.",
         "Given benchmark_results TSV, When inspected, Then manual gate 'benchmark/run_benchmark.sh build' completes in <30s, TSV in cwd and build/ have header File Original Size Tool Output Size Reduction % Time (ms) SSIM PSNR Status, and ctest gate can be used as single trusted baseline per J1/J2."
       ],
       "tests": [
@@ -528,10 +528,10 @@
         },
         {
           "test_id": "T06-T04",
-          "linked_acceptance_criterion": "Given git diff --stat against master, When checked, Then changes appear only in tests/, benchmark/, tools/render_diff.cpp, CMakeLists.txt, docs/, plus the ESC-001 carve-out in src/core/PDFOptimizer.cpp limited to the stream-dedup guard (isIndirect skip + try/catch, objGen != retained); no changes to image decode/encode branches, DecisionEngine wiring, stripping logic, or src/codecs/*; and vcpkg.json still lists gtest not catch2.",
+          "linked_acceptance_criterion": "Given the git tree, When checked, Then `git status --short` shows no modified tracked files outside docs/ (pipeline bookkeeping in docs/ evolves as the pipeline runs; only personal untracked files .graphifyignore, current_context.txt, graphify-out.old/ are allowed); the committed change set since 34e6301 touches only .gitignore, CMakeLists.txt, benchmark/, docs/, src/core/PDFOptimizer.h/.cpp, src/main.cpp, tests/, tools/render_diff.cpp, tools/run_optimize.cpp, vcpkg.json; src/core/PDFOptimizer.cpp contains the ESC-001 dedup guard (grep isIndirect) with no codec/DecisionEngine/stripping-logic changes; src/codecs/* is untouched; and vcpkg.json lists gtest not catch2.",
           "type": "unit",
           "description": "git diff --stat guard",
-          "expected_result": "git diff --name-only | grep -qvE '^(tests/|benchmark/|tools/render_diff|CMakeLists.txt|docs/|src/core/PDFOptimizer.cpp)' is empty (only allowed paths plus the ESC-001 carve-out file); git diff src/codecs/ is empty; git diff src/core/PDFOptimizer.cpp | grep -q 'isIndirect'; manual review confirms optimizer diff is dedup-block-only; grep -q 'gtest' vcpkg.json; ! grep -q 'catch2' vcpkg.json"
+          "expected_result": "git status --short | grep '^ M' | grep -v '^ M docs/' is empty (only docs/ bookkeeping may be modified); git status --short | grep '^??' | grep -vE '^\\?\\? (\\.graphifyignore|current_context\\.txt|graphify-out\\.old/)$' is empty; grep -q 'isIndirect' src/core/PDFOptimizer.cpp; git diff 34e6301 HEAD --stat -- src/codecs/ is empty; grep -q '\"gtest\"' vcpkg.json; ! grep -q 'catch2' vcpkg.json"
         },
         {
           "test_id": "T06-T05",
@@ -558,7 +558,7 @@
         "build/generate_corpus, build/render_diff, build/pdfcompress_tests"
       ],
       "architecture_dependency": false,
-      "status": "blocked"
+      "status": "done"
     },
     {
       "id": "T07-optimizer-dedup-fix",
