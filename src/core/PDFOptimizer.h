@@ -6,13 +6,88 @@
 
 namespace pdfcompress {
 
+struct OptimizationOptions {
+    CompressionProfile profile = CompressionProfile::Balanced;
+    int qualityHint = 0;
+
+    // Granular stripping options
+    bool stripLinks = false;
+    bool stripOtherAnnotations = false;
+    bool stripBookmarks = false;
+    bool stripForms = false;
+    bool stripJavaScript = false;
+    bool stripNamedDestinations = false;
+    bool stripMetadata = false;
+
+    // Structural options
+    bool linearize = false;          // Linearization off by default
+    bool recompressFlate = true;     // Level 9 Flate recompression
+    bool deduplicateStreams = true;  // Content-hash stream deduplication
+
+    static OptimizationOptions forProfile(CompressionProfile prof) {
+        OptimizationOptions opts;
+        opts.profile = prof;
+        opts.qualityHint = 0;
+        opts.linearize = false;
+        opts.recompressFlate = true;
+        opts.deduplicateStreams = true;
+        switch (prof) {
+            case CompressionProfile::MaxQuality:
+                opts.stripLinks = false;
+                opts.stripOtherAnnotations = false;
+                opts.stripBookmarks = false;
+                opts.stripForms = false;
+                opts.stripJavaScript = false;
+                opts.stripNamedDestinations = false;
+                opts.stripMetadata = false;
+                break;
+            case CompressionProfile::Balanced:
+                opts.stripLinks = false;
+                opts.stripOtherAnnotations = false;
+                opts.stripBookmarks = false;
+                opts.stripForms = false;
+                opts.stripJavaScript = true;
+                opts.stripNamedDestinations = false;
+                opts.stripMetadata = true;
+                break;
+            case CompressionProfile::MaxCompression:
+                opts.stripLinks = true;
+                opts.stripOtherAnnotations = true;
+                opts.stripBookmarks = true;
+                opts.stripForms = true;
+                opts.stripJavaScript = true;
+                opts.stripNamedDestinations = true;
+                opts.stripMetadata = true;
+                break;
+        }
+        return opts;
+    }
+};
+
 struct OptimizationResult {
     bool success = false;
     size_t originalSizeBytes = 0;
     size_t optimizedSizeBytes = 0;
+
+    // Image breakdown
     int imagesProcessed = 0;
+    int imagesOptimized = 0;
+    int imagesSkipped = 0;
+    int imagesKeptOriginal = 0;
+    size_t imageBytesSaved = 0;
+
+    // Stripping breakdown
+    int linksRemoved = 0;
     int annotationsRemoved = 0;
     int bookmarksRemoved = 0;
+    int formsRemoved = 0;
+    int jsRemoved = 0;
+    int namedDestinationsRemoved = 0;
+    bool metadataStripped = false;
+
+    // Structural breakdown
+    int streamsDeduplicated = 0;
+
     std::string errorMessage;
 };
 
@@ -20,15 +95,20 @@ class PDFOptimizer {
 public:
     PDFOptimizer();
 
-    /// Optimize a PDF by replacing image streams and stripping interactive elements.
-    /// @param inputPath Path to original PDF.
-    /// @param outputPath Path to save the optimized PDF.
-    /// @param profile Compression profile to use for images.
-    /// @return Results of the optimization.
+    /// Optimize a PDF using full options.
+    OptimizationResult optimize(const std::string& inputPath,
+                                const std::string& outputPath,
+                                const OptimizationOptions& options);
+
+    /// Backwards-compatible overload.
     OptimizationResult optimize(const std::string& inputPath, 
                                 const std::string& outputPath,
                                 CompressionProfile profile = CompressionProfile::Balanced,
-                                int qualityHint = 0);
+                                int qualityHint = 0) {
+        OptimizationOptions opts = OptimizationOptions::forProfile(profile);
+        opts.qualityHint = qualityHint;
+        return optimize(inputPath, outputPath, opts);
+    }
                                 
 private:
     DecisionEngine m_decisionEngine;
