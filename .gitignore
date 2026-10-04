@@ -11,4 +11,5 @@ vcpkg_installed/
 # ESC-003 hygiene: ignore benchmark TSV + corpus_info byproducts (out-of-footprint edit, flagged)
 benchmark_results_*.tsv
 corpus_info*.txt
-machine-specific dotfiles
+.graphify_python
+.graphify_root
