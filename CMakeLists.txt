@@ -111,6 +111,16 @@ add_executable(diagnose tools/diagnose.cpp)
 target_link_libraries(diagnose PRIVATE qpdf::libqpdf JPEG::JPEG)
 target_link_directories(diagnose PRIVATE ${_VCPKG_LIB_DIR})
 
+# Render-diff helper (PDFium 150 DPI BGRA SSIM/PSNR)
+add_executable(render_diff tools/render_diff.cpp)
+target_link_libraries(render_diff PRIVATE pdfcompress_core pdfium)
+target_compile_options(render_diff PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall -Wextra -Wpedantic>)
+# Fix dylib path so ./build/render_diff works from repo root (uses @executable_path)
+add_custom_command(TARGET render_diff POST_BUILD
+    COMMAND install_name_tool -change "./libpdfium.dylib" "@executable_path/libpdfium.dylib" "$<TARGET_FILE:render_diff>" || true
+    COMMENT "Fixing libpdfium rpath for render_diff"
+)
+
 # Copy PDFium dylib into the app bundle so the app can find it at runtime
 add_custom_command(TARGET PDFCompressor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -124,3 +134,44 @@ add_custom_command(TARGET PDFCompressor POST_BUILD
         "$<TARGET_BUNDLE_DIR:PDFCompressor>/Contents/MacOS/PDFCompressor"
     COMMENT "Bundling libpdfium.dylib into app bundle"
 )
+
+
+# Establish a clean-warning baseline for the core logic
+target_compile_options(pdfcompress_core PRIVATE
+    $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall -Wextra -Wpedantic>
+)
+
+# --- Testing & Benchmarking ---
+option(BUILD_TESTING "Build unit tests" ON)
+if(BUILD_TESTING)
+    enable_testing()
+    find_package(GTest CONFIG REQUIRED)
+
+    add_executable(pdfcompress_tests
+        tests/test_image_analyzer.cpp
+        tests/test_decision_engine.cpp
+        tests/test_codecs.cpp
+        tests/test_pdf_optimizer.cpp
+        tests/test_corpus_generator.cpp
+        tests/test_corpus_verifier.cpp
+    )
+    target_link_libraries(pdfcompress_tests PRIVATE
+        GTest::gtest GTest::gtest_main
+        pdfcompress_core
+    )
+    target_include_directories(pdfcompress_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/tests
+    )
+
+    include(GoogleTest)
+    gtest_discover_tests(pdfcompress_tests)
+    
+    # Benchmark corpus generator tool
+    add_executable(generate_corpus benchmark/generate_corpus.cpp tests/test_corpus_generator.cpp)
+    target_link_libraries(generate_corpus PRIVATE pdfcompress_core)
+    target_include_directories(generate_corpus PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tests)
+endif()
+
+# Copy libpdfium to build dir for tests and CLI tools
+file(COPY "${PDFIUM_DYLIB}" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
