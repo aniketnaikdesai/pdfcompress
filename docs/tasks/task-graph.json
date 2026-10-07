@@ -1,673 +1,465 @@
 {
-  "metadata": {
-    "version": "1.0.0",
-    "generated_at": "2026-10-03T23:39:13.645769Z",
-    "status": "READY_FOR_BUILD",
-    "max_parallel_tasks": 4,
-    "project": "pdfcompress Phase 0",
-    "phase": "Phase 0.1-0.4 Verification and Baseline",
-    "total_tasks": 8
-  },
+  "phase": "Phase 1 (Goal B) \u2014 Structure & Profile-Defaults Verify-and-Complete",
+  "max_parallel_tasks": 4,
+  "status": "READY_FOR_BUILD",
   "tasks": [
     {
-      "id": "T01-corpus-hardening",
-      "title": "Corpus Hardening — replace 6 stubs, add missing types, fix CMYK, 14 deterministic QPDF PDFs",
-      "description": "Replace stubs in tests/test_corpus_generator.h/.cpp with real QPDF implementations for 14 AC3 types, fix cmyk_image to FlateDecode, ensure deterministic Helvetica Type1, TMPDIR storage, and generateAll emits exactly 14.",
+      "id": "P1-T1",
+      "title": "Profile-defaults verifier tests (AC-B1)",
+      "description": "Create tests/test_profile_defaults.cpp with three TEST(ProfileDefaults,...) cases that pin OptimizationOptions::forProfile defaults exactly (7 strip booleans + linearize + recompressFlate + deduplicateStreams per profile). Pure verification: no product-code change.",
       "agent": "build_worker",
-      "task_type": "feature",
+      "task_type": "code",
       "dependencies": [],
       "acceptance_criteria": [
-        "Given TestCorpusGenerator header exists, When header is inspected, Then it declares generateLineArt(), generateTransparency(), generateEncrypted(), generatePhotoHeavy() (or photo_heavy alias), generateMergedDuplicateFonts() (or shared XObject alias) plus the 6 stub replacements generateWithForm/generateWithMetadata/generateWithJavaScript/generateMultiImage/generateSharedXObject/generateLargeUncompressed with consistent signatures and corpusDir() still returns $TMPDIR/pdfcompress_test_corpus.",
-        "Given generateAll is invoked, When ls $TMPDIR/pdfcompress_test_corpus/*.pdf | wc -l is run, Then count equals 14 and filenames are text_only, photo_jpeg, photo_heavy, screenshot_flat, line_art, grayscale_scan, monochrome_bw, with_form, with_bookmarks_and_links, with_javascript, with_metadata, encrypted, cmyk_image, transparency (RG-001: transparency embeds SMask + shared XObject, no separate merged_duplicate_fonts.pdf unless explicitly documented as 15th).",
-        "Given a fresh TMPDIR, When ./build/generate_corpus is run twice, Then both runs print 'Corpus generated at: \".../pdfcompress_test_corpus\"', create the directory via std::filesystem::create_directories, overwrite deterministically, and every PDF passes QPDF().processFile(path) without warnings.",
-        "Given each generator, When QPDFWriter is used, Then writer.setDeterministicID(true) is called, content uses fixed dimensions and fixed pixel buffers, Type1 Helvetica /Helvetica via QPDF::emptyPDF() + QPDFObjectHandle::parse/newStream, no embedded third-party font/image, and no random IDs.",
-        "Given with_form.pdf, When inspected with QPDF or qpdf --json, Then trailer/page tree contains /AcroForm with /Fields and at least one Widget /Annot /Subtype /Widget.",
-        "Given with_metadata.pdf, When inspected, Then it contains /Info dict with /Producer or /Title and a /Metadata XMP stream plus /PieceInfo or /Thumb handling, exercising PDFOptimizer metadata strip path.",
-        "Given with_javascript.pdf, When inspected, Then it contains /Names << /JavaScript ... >> and /OpenAction << /S /JavaScript /JS (...) >> as separate type from bookmarks/links.",
-        "Given with_bookmarks_and_links.pdf, When inspected, Then it contains /Outlines /Count >=1, /Annots with /Subtype /Link or /Text, and /Dests on the catalog.",
-        "Given transparency.pdf (RG-001), When inspected, Then it contains an image XObject with /SMask << /S /Alpha >> or /SMask reference AND /Group << /S /Transparency >> on a page or XObject AND two pages share the same indirect XObject via identical QPDFObjectHandle (same object ID) to cover merged_duplicate_fonts.",
-        "Given cmyk_image.pdf, When inspected, Then it contains /ColorSpace /DeviceCMYK, /BitsPerComponent 8, /Filter /FlateDecode (not /DCTDecode), with valid compressed bytes via compress() that decompress correctly, and PDFOptimizer later reports imagesSkipped==1 for CMYK.",
-        "Given line_art.pdf, When generated, Then it is 300x300 DeviceRGB FlateDecode with high edge-density quadrants (at least 2 distinct colors in limited palette, verified by pixel buffer pattern in source) and photo_heavy.pdf is multi-page with 3 distinct images 300x200, 200x150, 250x180 each with distinct pixel content.",
-        "Given large_uncompressed.pdf, When generated, Then its uncompressed stream size is >=50KB before writer recompressFlate (e.g., 300x400*3 bytes) so that benchmark size guard is meaningful and file size on disk after writer is >=50KB or at least not tiny 667 bytes.",
-        "Given encrypted.pdf, When generated, Then QPDFWriter uses R6 AES-128 setR6Encryption (fallback setR3Encryption) with user password 'test123' no owner password, and without password QPDF::processFile throws or isEncrypted==true, while with password 'test123' it decrypts."
+        "Given OptimizationOptions::forProfile(MaxQuality) as on master, when TEST(ProfileDefaults, MaxQualityStripsNothing) runs, then all 7 strip booleans are false and linearize=false, recompressFlate=true, deduplicateStreams=true.",
+        "Given OptimizationOptions::forProfile(Balanced) as on master, when TEST(ProfileDefaults, BalancedStripsJsAndMetadataOnly) runs, then only stripJavaScript and stripMetadata are true (other 5 strip booleans false) and linearize=false, recompressFlate=true, deduplicateStreams=true.",
+        "Given OptimizationOptions::forProfile(MaxCompression) as on master, when TEST(ProfileDefaults, MaxCompressionStripsEverything) runs, then all 7 strip booleans are true and linearize=false, recompressFlate=true, deduplicateStreams=true."
       ],
       "tests": [
         {
-          "test_id": "T01-T01",
-          "linked_acceptance_criterion": "Given TestCorpusGenerator header exists, When header is inspected, Then it declares generateLineArt(), generateTransparency(), generateEncrypted(), generatePhotoHeavy() (or photo_heavy alias), generateMergedDuplicateFonts() (or shared XObject alias) plus the 6 stub replacements generateWithForm/generateWithMetadata/generateWithJavaScript/generateMultiImage/generateSharedXObject/generateLargeUncompressed with consistent signatures and corpusDir() still returns $TMPDIR/pdfcompress_test_corpus.",
+          "test_id": "P1-T1-T01",
+          "linked_acceptance_criterion": "Given OptimizationOptions::forProfile(MaxQuality) as on master, when TEST(ProfileDefaults, MaxQualityStripsNothing) runs, then all 7 strip booleans are false and linearize=false, recompressFlate=true, deduplicateStreams=true.",
           "type": "unit",
-          "description": "grep header for declared methods and corpusDir path",
-          "expected_result": "grep -E 'generateLineArt|generateTransparency|generateEncrypted|generatePhotoHeavy|generateMergedDuplicateFonts|generateWithForm|generateWithMetadata|generateWithJavaScript|generateMultiImage|generateSharedXObject|generateLargeUncompressed' tests/test_corpus_generator.h succeeds for all; grep -F 'pdfcompress_test_corpus' tests/test_corpus_generator.h succeeds"
+          "description": "Build forProfile(MaxQuality) and EXPECT_FALSE each strip boolean, EXPECT_FALSE linearize, EXPECT_TRUE recompressFlate and deduplicateStreams.",
+          "expected_result": "TEST(ProfileDefaults, MaxQualityStripsNothing) passes."
         },
         {
-          "test_id": "T01-T02",
-          "linked_acceptance_criterion": "Given generateAll is invoked, When ls $TMPDIR/pdfcompress_test_corpus/*.pdf | wc -l is run, Then count equals 14 and filenames are text_only, photo_jpeg, photo_heavy, screenshot_flat, line_art, grayscale_scan, monochrome_bw, with_form, with_bookmarks_and_links, with_javascript, with_metadata, encrypted, cmyk_image, transparency (RG-001: transparency embeds SMask + shared XObject, no separate merged_duplicate_fonts.pdf unless explicitly documented as 15th).",
-          "type": "integration",
-          "description": "Build and run generate_corpus then count and list files",
-          "expected_result": "cmake --build build --target generate_corpus && ./build/generate_corpus | tee corpus_info.txt; CORPUS=$(grep -F 'Corpus generated at:' corpus_info.txt | awk -F'\"' '{print $2}'); ls \"$CORPUS\"/*.pdf | wc -l equals 14; ls \"$CORPUS\" lists exactly the 14 basenames above, no merged_duplicate_fonts.pdf unless FAIL"
-        },
-        {
-          "test_id": "T01-T03",
-          "linked_acceptance_criterion": "Given a fresh TMPDIR, When ./build/generate_corpus is run twice, Then both runs print 'Corpus generated at: \".../pdfcompress_test_corpus\"', create the directory via std::filesystem::create_directories, overwrite deterministically, and every PDF passes QPDF().processFile(path) without warnings.",
-          "type": "integration",
-          "description": "Determinism and QPDF validity check via qpdf tool",
-          "expected_result": "./build/generate_corpus twice; second ls count still 14; for each pdf, qpdf --check $pdf exits 0 and python/c++ QPDF().processFile succeeds; grep corpus_info.txt contains Corpus generated at:"
-        },
-        {
-          "test_id": "T01-T04",
-          "linked_acceptance_criterion": "Given each generator, When QPDFWriter is used, Then writer.setDeterministicID(true) is called, content uses fixed dimensions and fixed pixel buffers, Type1 Helvetica /Helvetica via QPDF::emptyPDF() + QPDFObjectHandle::parse/newStream, no embedded third-party font/image, and no random IDs.",
+          "test_id": "P1-T1-T02",
+          "linked_acceptance_criterion": "Given OptimizationOptions::forProfile(Balanced) as on master, when TEST(ProfileDefaults, BalancedStripsJsAndMetadataOnly) runs, then only stripJavaScript and stripMetadata are true (other 5 strip booleans false) and linearize=false, recompressFlate=true, deduplicateStreams=true.",
           "type": "unit",
-          "description": "Source inspection for deterministic ID and Helvetica",
-          "expected_result": "grep -n 'setDeterministicID(true)' tests/test_corpus_generator.cpp found at least once per generator or in helper; grep -c 'Helvetica' tests/test_corpus_generator.cpp >=1; no binary font blobs; md5 of two successive runs for same type matches"
+          "description": "Build forProfile(Balanced) and EXPECT_TRUE stripJavaScript/stripMetadata, EXPECT_FALSE the other 5 strip booleans and linearize, EXPECT_TRUE recompressFlate/deduplicateStreams.",
+          "expected_result": "TEST(ProfileDefaults, BalancedStripsJsAndMetadataOnly) passes."
         },
         {
-          "test_id": "T01-T05",
-          "linked_acceptance_criterion": "Given with_form.pdf, When inspected with QPDF or qpdf --json, Then trailer/page tree contains /AcroForm with /Fields and at least one Widget /Annot /Subtype /Widget.",
-          "type": "integration",
-          "description": "Check AcroForm key in generated PDF",
-          "expected_result": "qpdf --json $CORPUS/with_form.pdf | grep -q AcroForm; qpdf --json $CORPUS/with_form.pdf | grep -q Widget; or C++ QPDF getKey('/AcroForm') is not null"
-        },
-        {
-          "test_id": "T01-T06",
-          "linked_acceptance_criterion": "Given with_metadata.pdf, When inspected, Then it contains /Info dict with /Producer or /Title and a /Metadata XMP stream plus /PieceInfo or /Thumb handling, exercising PDFOptimizer metadata strip path.",
-          "type": "integration",
-          "description": "Check Info/Metadata keys",
-          "expected_result": "qpdf --json $CORPUS/with_metadata.pdf | grep -q '/Info' or check trailer has /Info; qpdf --json | grep -q Metadata ; C++ assert hasKey('/Metadata')"
-        },
-        {
-          "test_id": "T01-T07",
-          "linked_acceptance_criterion": "Given with_javascript.pdf, When inspected, Then it contains /Names << /JavaScript ... >> and /OpenAction << /S /JavaScript /JS (...) >> as separate type from bookmarks/links.",
-          "type": "integration",
-          "description": "Check JavaScript keys",
-          "expected_result": "qpdf --json $CORPUS/with_javascript.pdf | grep -q JavaScript; grep -q OpenAction; C++ hasKey('/Names') and nested JavaScript"
-        },
-        {
-          "test_id": "T01-T08",
-          "linked_acceptance_criterion": "Given with_bookmarks_and_links.pdf, When inspected, Then it contains /Outlines /Count >=1, /Annots with /Subtype /Link or /Text, and /Dests on the catalog.",
-          "type": "integration",
-          "description": "Check bookmarks/links/dests",
-          "expected_result": "qpdf --json $CORPUS/with_bookmarks_and_links.pdf | grep -q Outlines; grep -q Annots; grep -q Dests"
-        },
-        {
-          "test_id": "T01-T09",
-          "linked_acceptance_criterion": "Given transparency.pdf (RG-001), When inspected, Then it contains an image XObject with /SMask << /S /Alpha >> or /SMask reference AND /Group << /S /Transparency >> on a page or XObject AND two pages share the same indirect XObject via identical QPDFObjectHandle (same object ID) to cover merged_duplicate_fonts.",
-          "type": "integration",
-          "description": "Check SMask and shared XObject coverage",
-          "expected_result": "qpdf --json $CORPUS/transparency.pdf | grep -q SMask; grep -q Transparency; C++ check that two pages reference same object ID for Im1 (getObjectID equal)"
-        },
-        {
-          "test_id": "T01-T10",
-          "linked_acceptance_criterion": "Given cmyk_image.pdf, When inspected, Then it contains /ColorSpace /DeviceCMYK, /BitsPerComponent 8, /Filter /FlateDecode (not /DCTDecode), with valid compressed bytes via compress() that decompress correctly, and PDFOptimizer later reports imagesSkipped==1 for CMYK.",
-          "type": "integration",
-          "description": "Check CMYK FlateDecode",
-          "expected_result": "qpdf --json $CORPUS/cmyk_image.pdf | grep -q DeviceCMYK; grep -q FlateDecode; not DCTDecode; qpdf --check passes; later optimizer test shows imagesSkipped==1"
-        },
-        {
-          "test_id": "T01-T11",
-          "linked_acceptance_criterion": "Given line_art.pdf, When generated, Then it is 300x300 DeviceRGB FlateDecode with high edge-density quadrants (at least 2 distinct colors in limited palette, verified by pixel buffer pattern in source) and photo_heavy.pdf is multi-page with 3 distinct images 300x200, 200x150, 250x180 each with distinct pixel content.",
+          "test_id": "P1-T1-T03",
+          "linked_acceptance_criterion": "Given OptimizationOptions::forProfile(MaxCompression) as on master, when TEST(ProfileDefaults, MaxCompressionStripsEverything) runs, then all 7 strip booleans are true and linearize=false, recompressFlate=true, deduplicateStreams=true.",
           "type": "unit",
-          "description": "Source and PDF dims check",
-          "expected_result": "grep -n '300.*300.*line_art' tests/test_corpus_generator.cpp; qpdf --json $CORPUS/line_art.pdf shows Width 300 Height 300; photo_heavy.pdf has 3 pages or 3 XObjects with widths 300,200,250; source shows 3 distinct pixel buffers"
-        },
-        {
-          "test_id": "T01-T12",
-          "linked_acceptance_criterion": "Given large_uncompressed.pdf, When generated, Then its uncompressed stream size is >=50KB before writer recompressFlate (e.g., 300x400*3 bytes) so that benchmark size guard is meaningful and file size on disk after writer is >=50KB or at least not tiny 667 bytes.",
-          "type": "integration",
-          "description": "Check large file size",
-          "expected_result": "stat -f%z or -c%s $CORPUS/large_uncompressed.pdf >= 50000 or uncompressed stream dict shows large; ls -lh shows not 667 bytes"
-        },
-        {
-          "test_id": "T01-T13",
-          "linked_acceptance_criterion": "Given encrypted.pdf, When generated, Then QPDFWriter uses R6 AES-128 setR6Encryption (fallback setR3Encryption) with user password 'test123' no owner password, and without password QPDF::processFile throws or isEncrypted==true, while with password 'test123' it decrypts.",
-          "type": "integration",
-          "description": "Check encryption",
-          "expected_result": "grep -n 'setR6Encryption\\|setR3Encryption' tests/test_corpus_generator.cpp; qpdf --check $CORPUS/encrypted.pdf fails without password; qpdf --password=test123 --check $CORPUS/encrypted.pdf succeeds; C++ PDFInspector isEncrypted true without password"
+          "description": "Build forProfile(MaxCompression) and EXPECT_TRUE all 7 strip booleans, EXPECT_FALSE linearize, EXPECT_TRUE recompressFlate/deduplicateStreams.",
+          "expected_result": "TEST(ProfileDefaults, MaxCompressionStripsEverything) passes."
         }
       ],
       "expected_artifacts": [
-        "tests/test_corpus_generator.h",
-        "tests/test_corpus_generator.cpp"
+        "tests/test_profile_defaults.cpp"
       ],
       "touches_files": [
-        "tests/test_corpus_generator.h",
-        "tests/test_corpus_generator.cpp"
+        "tests/test_profile_defaults.cpp"
       ],
       "inputs": [
-        "docs/architecture.md",
-        "docs/plan.md",
-        "docs/requirements/requirements.md AC3",
-        "tests/test_corpus_generator.h/.cpp existing stubs"
+        "src/core/PDFOptimizer.h forProfile defaults"
       ],
       "outputs": [
-        "14 PDFs in $TMPDIR/pdfcompress_test_corpus via generate_corpus"
+        "tests/test_profile_defaults.cpp with 3 TEST cases"
       ],
-      "architecture_dependency": false,
-      "status": "done"
+      "status": "done",
+      "size": "S",
+      "context": {
+        "read_files": [
+          {
+            "path": "src/core/PDFOptimizer.h",
+            "lines": "9-65",
+            "why": "forProfile defaults under test; do not modify"
+          },
+          {
+            "path": "tests/test_pdf_optimizer.cpp",
+            "lines": "1-58",
+            "why": "GTest conventions and corpus-generator usage in this repo"
+          },
+          {
+            "path": "CMakeLists.txt",
+            "lines": "150-157",
+            "why": "see pdfcompress_tests wiring (P1-T4 owns the edit)"
+          }
+        ],
+        "contracts": [
+          "static OptimizationOptions forProfile(CompressionProfile prof)  [existing, do not change signature or defaults]",
+          "bool stripLinks, stripOtherAnnotations, stripBookmarks, stripForms, stripJavaScript, stripNamedDestinations, stripMetadata; bool linearize=false; bool recompressFlate=true; bool deduplicateStreams=true  [existing]"
+        ],
+        "architecture_excerpt": "| `OptimizationOptions::forProfile` + strip/writer paths | [existing] | Normative defaults locked by tests in Ph.1; extended with new fields only (`targetDPI`, transcode/JBIG2/subset/password flags) \u2014 no semantic change to strip logic |",
+        "plan_excerpt": "- **Scope:** New `tests/test_profile_defaults.cpp` (`TEST(ProfileDefaults,\u2026)` \u00d73 + CLI round-trip for `--strip-*/--no-strip-*`, `--linearize/--no-flate-recompress/--no-dedup`); `/AA` + non-JS `/OpenAction` handling completion; `--linearize` USAGE.md gap; no `DecisionEngine`/codec/DPI change.",
+        "requirement_ids": [
+          "AC-B1",
+          "S1",
+          "S9"
+        ],
+        "test_command": "ctest --test-dir build -R ProfileDefaults --output-on-failure",
+        "memory_notes": [],
+        "needs_graphify": false,
+        "size": "S"
+      }
     },
     {
-      "id": "T02-benchmark-hardening",
-      "title": "Benchmark Hardening — valid QPDF, 5-tool matrix, guarded SKIPPED, ms timing, TSV idempotency",
-      "description": "Fix benchmark/run_benchmark.sh to use valid qpdf recompress invocation, add gs ebook/screen and ocrmypdf with command -v guards, ms wall timing, TSV header with SSIM/PSNR, idempotency filters, never overwrite input, || true for encrypted, dual TSV write.",
+      "id": "P1-T2",
+      "title": "Stripping end-to-end verifier tests incl. GoTo survival (AC-B2 + CLI round-trip)",
+      "description": "Create tests/test_stripping_profiles.cpp that optimizes the four stripping corpus PDFs under each profile via the optimizer API and asserts the per-profile removal matrix, non-JS /OpenAction GoTo survival, /AA removal under JS-strip, and explicit CLI-flag-wins round-trip. Verification only: if any test exposes a strip-logic gap, record it and stop, do not change strip semantics.",
       "agent": "build_worker",
-      "task_type": "feature",
-      "dependencies": [
-        "T01-corpus-hardening"
-      ],
+      "task_type": "code",
+      "dependencies": [],
       "acceptance_criteria": [
-        "Given benchmark/run_benchmark.sh, When inspected, Then it starts with 'set -euo pipefail', takes BUILD_DIR arg default 'build', checks [ -d \"$BUILD_DIR\" ], regenerates corpus via (cd \"$BUILD_DIR\" && ./generate_corpus) | tee corpus_info.txt and parses CORPUS_DIR via grep -F 'Corpus generated at:' | awk -F'\"' '{print $2}' with fallback.",
-        "Given qpdf tool row, When script runs, Then it invokes 'qpdf --recompress --compression-level=9 --object-streams=generate \"$pdf\" \"$out\"' (not --optimize) and this command is guarded by command -v qpdf; missing qpdf does not produce FAILED row.",
-        "Given Ghostscript rows, When script runs, Then it invokes 'gs -sDEVICE=pdfwrite -dPDFSETTINGS=/ebook -dCompatibilityLevel=1.7 -dNOPAUSE -dBATCH -sOutputFile=' and same with /screen, each guarded by command -v gs, missing gs yields SKIPPED (not installed) row.",
-        "Given ocrmypdf row, When script runs, Then it invokes 'ocrmypdf --optimize 3 --skip-text \"$pdf\" \"$out\"' guarded by command -v ocrmypdf, missing yields SKIPPED.",
-        "Given pdfcompress row, When script runs, Then it invokes '(cd \"$BUILD_DIR\" && ./run_optimize \"$pdf\")' wrapped with '|| true' so encrypted.pdf does not abort set -e, and output is \"${pdf%.pdf}_optimized.pdf\" never overwriting input.",
-        "Given timing, When run_tool executes, Then wall time is measured in milliseconds via date +%s%3N or gdate +%s%3N or fallback date +%s *1000, stored as integer ms without trailing 's', using stat -f%z / stat -c%s portably and reduction% via awk '{printf \"%.2f\", (1-out/orig)*100}' (bc fallback allowed).",
-        "Given TSV header, When script creates RESULTS_FILE, Then header is exactly 'File\\tOriginal Size\\tTool\\tOutput Size\\tReduction %\\tTime (ms)\\tSSIM\\tPSNR\\tStatus' with SSIM 3 decimals PSNR 1 decimal or N/A, and Status is OK/SKIPPED (not installed)/FAILED only for real failure.",
-        "Given missing tool, When tool binary not found, Then script writes one row per tool per PDF with Output Size 'SKIPPED (not installed)' and Status 'SKIPPED (not installed)' rather than FAILED, and still produces pdfcompress rows.",
-        "Given corpus dir contains *_optimized.pdf, *.qpdf.pdf, *.opt.pdf, *.gs*.pdf, *.ocrmypdf.pdf from prior run, When script iterates \"$CORPUS_DIR\"/*.pdf, Then it skips all patterns '*_optimized*' '*.qpdf*' '*.opt*' '*.gs*' '*.ocrmypdf*' to ensure idempotency and no re-benchmarking of outputs.",
-        "Given script completes, When ls is checked, Then benchmark_results_YYYYMMDD_HHMMSS.tsv exists in cwd and in build/ (copy), and script prints column -t -s $'\\t' table, and never overwrites input PDFs (all outputs are <name>.<tool>.pdf alongside corpus).",
-        "Given encrypted.pdf in corpus, When run_tool runs pdfcompress on it, Then script does not exit due to set -e because of || true, and generates a FAILED or SKIPPED row with error handling but continues looping remaining PDFs."
+        "Given the four stripping corpus PDFs (with_form, with_bookmarks_and_links, with_javascript, with_metadata) with real dict keys, when optimized with forProfile(MaxQuality), then 0 items are removed on all four (all *Removed counts 0, metadataStripped false).",
+        "Given the same four PDFs, when optimized with forProfile(Balanced), then jsRemoved>=1 on with_javascript.pdf and metadataStripped==true on with_metadata.pdf and nothing else, where \"nothing else\" scopes to the six removal counters only (linksRemoved/annotationsRemoved/bookmarksRemoved/formsRemoved/jsRemoved-on-non-JS-files/namedDestinationsRemoved ==0 on files lacking those elements); metadataStripped is NOT asserted on metadata-free PDFs (Balanced applies stripMetadata=true, which reports true on all inputs per the ESC-008 intent ruling locked 2026-10-07).",
+        "Given the same four PDFs, when optimized with forProfile(MaxCompression), then >=1 item is removed on each of the four PDFs.",
+        "Given a PDF whose /OpenAction is a non-JS GoTo destination (staged in $TMPDIR, never committed), when optimized under every profile, then the GoTo /OpenAction survives in the output; and given /AA keys present, when optimized with stripJavaScript=true, then /AA is removed with jsRemoved>=1.",
+        "Given --profile balanced plus an explicit --strip-bookmarks override round-tripped through run_optimize CLI parsing semantics (forProfile then explicit flag wins), when optimized, then bookmarks are removed and the result breakdown logs the removal (explicit flag wins over profile default)."
       ],
       "tests": [
         {
-          "test_id": "T02-T01",
-          "linked_acceptance_criterion": "Given benchmark/run_benchmark.sh, When inspected, Then it starts with 'set -euo pipefail', takes BUILD_DIR arg default 'build', checks [ -d \"$BUILD_DIR\" ], regenerates corpus via (cd \"$BUILD_DIR\" && ./generate_corpus) | tee corpus_info.txt and parses CORPUS_DIR via grep -F 'Corpus generated at:' | awk -F'\"' '{print $2}' with fallback.",
-          "type": "unit",
-          "description": "grep script header",
-          "expected_result": "head -n5 benchmark/run_benchmark.sh | grep -q 'set -euo pipefail'; grep -q 'BUILD_DIR=.*build' benchmark/run_benchmark.sh; grep -q 'generate_corpus' benchmark/run_benchmark.sh; grep -q 'Corpus generated at:' benchmark/run_benchmark.sh"
-        },
-        {
-          "test_id": "T02-T02",
-          "linked_acceptance_criterion": "Given qpdf tool row, When script runs, Then it invokes 'qpdf --recompress --compression-level=9 --object-streams=generate \"$pdf\" \"$out\"' (not --optimize) and this command is guarded by command -v qpdf; missing qpdf does not produce FAILED row.",
-          "type": "unit",
-          "description": "grep qpdf invocation",
-          "expected_result": "grep -q -- '--recompress --compression-level=9 --object-streams=generate' benchmark/run_benchmark.sh; ! grep -q 'qpdf --optimize' benchmark/run_benchmark.sh; grep -q 'command -v qpdf' benchmark/run_benchmark.sh"
-        },
-        {
-          "test_id": "T02-T03",
-          "linked_acceptance_criterion": "Given Ghostscript rows, When script runs, Then it invokes 'gs -sDEVICE=pdfwrite -dPDFSETTINGS=/ebook -dCompatibilityLevel=1.7 -dNOPAUSE -dBATCH -sOutputFile=' and same with /screen, each guarded by command -v gs, missing gs yields SKIPPED (not installed) row.",
-          "type": "unit",
-          "description": "grep gs ebook/screen",
-          "expected_result": "grep -q 'PDFSETTINGS=/ebook' benchmark/run_benchmark.sh; grep -q 'PDFSETTINGS=/screen' benchmark/run_benchmark.sh; grep -q 'sDEVICE=pdfwrite' benchmark/run_benchmark.sh; grep -q 'command -v gs' benchmark/run_benchmark.sh"
-        },
-        {
-          "test_id": "T02-T04",
-          "linked_acceptance_criterion": "Given ocrmypdf row, When script runs, Then it invokes 'ocrmypdf --optimize 3 --skip-text \"$pdf\" \"$out\"' guarded by command -v ocrmypdf, missing yields SKIPPED.",
-          "type": "unit",
-          "description": "grep ocrmypdf",
-          "expected_result": "grep -q 'ocrmypdf --optimize 3 --skip-text' benchmark/run_benchmark.sh; grep -q 'command -v ocrmypdf' benchmark/run_benchmark.sh"
-        },
-        {
-          "test_id": "T02-T05",
-          "linked_acceptance_criterion": "Given pdfcompress row, When script runs, Then it invokes '(cd \"$BUILD_DIR\" && ./run_optimize \"$pdf\")' wrapped with '|| true' so encrypted.pdf does not abort set -e, and output is \"${pdf%.pdf}_optimized.pdf\" never overwriting input.",
-          "type": "unit",
-          "description": "grep run_optimize with || true",
-          "expected_result": "grep -q 'run_optimize' benchmark/run_benchmark.sh; grep -q '|| true' benchmark/run_benchmark.sh; grep -q '_optimized.pdf' benchmark/run_benchmark.sh; ! grep -q 'cp.*input.*output.*overwrite' benchmark/run_benchmark.sh"
-        },
-        {
-          "test_id": "T02-T06",
-          "linked_acceptance_criterion": "Given timing, When run_tool executes, Then wall time is measured in milliseconds via date +%s%3N or gdate +%s%3N or fallback date +%s *1000, stored as integer ms without trailing 's', using stat -f%z / stat -c%s portably and reduction% via awk '{printf \"%.2f\", (1-out/orig)*100}' (bc fallback allowed).",
-          "type": "unit",
-          "description": "grep timing impl",
-          "expected_result": "grep -q 'date +%s%3N\\|gdate\\|date +%s' benchmark/run_benchmark.sh; grep -q 'stat -f%z\\|stat -c%s' benchmark/run_benchmark.sh; grep -q \"awk.*printf.*%.2f\" benchmark/run_benchmark.sh; ! grep -q '\\${elapsed}s' benchmark/run_benchmark.sh (no 's' suffix)"
-        },
-        {
-          "test_id": "T02-T07",
-          "linked_acceptance_criterion": "Given TSV header, When script creates RESULTS_FILE, Then header is exactly 'File\\tOriginal Size\\tTool\\tOutput Size\\tReduction %\\tTime (ms)\\tSSIM\\tPSNR\\tStatus' with SSIM 3 decimals PSNR 1 decimal or N/A, and Status is OK/SKIPPED (not installed)/FAILED only for real failure.",
-          "type": "unit",
-          "description": "grep TSV header",
-          "expected_result": "grep -q 'File.*Original Size.*Tool.*Output Size.*Reduction %.*Time (ms).*SSIM.*PSNR.*Status' benchmark/run_benchmark.sh; grep -q 'SSIM.*PSNR' benchmark/run_benchmark.sh"
-        },
-        {
-          "test_id": "T02-T08",
-          "linked_acceptance_criterion": "Given missing tool, When tool binary not found, Then script writes one row per tool per PDF with Output Size 'SKIPPED (not installed)' and Status 'SKIPPED (not installed)' rather than FAILED, and still produces pdfcompress rows.",
+          "test_id": "P1-T2-T01",
+          "linked_acceptance_criterion": "Given the four stripping corpus PDFs (with_form, with_bookmarks_and_links, with_javascript, with_metadata) with real dict keys, when optimized with forProfile(MaxQuality), then 0 items are removed on all four (all *Removed counts 0, metadataStripped false).",
           "type": "integration",
-          "description": "Run script with PATH hiding gs/ocrmypdf",
-          "expected_result": "PATH=/usr/bin:/bin bash benchmark/run_benchmark.sh build 2>&1 | tee /tmp/bench.log; grep -q 'SKIPPED (not installed)' benchmark_results_*.tsv || true; grep -q 'pdfcompress' benchmark_results_*.tsv"
+          "description": "Optimize each of the four corpus PDFs with forProfile(MaxQuality); assert all removal counters 0 and metadataStripped false; verify outputs pass QPDF().processFile.",
+          "expected_result": "All four MaxQuality runs succeed with zero removals."
         },
         {
-          "test_id": "T02-T09",
-          "linked_acceptance_criterion": "Given corpus dir contains *_optimized.pdf, *.qpdf.pdf, *.opt.pdf, *.gs*.pdf, *.ocrmypdf.pdf from prior run, When script iterates \"$CORPUS_DIR\"/*.pdf, Then it skips all patterns '*_optimized*' '*.qpdf*' '*.opt*' '*.gs*' '*.ocrmypdf*' to ensure idempotency and no re-benchmarking of outputs.",
-          "type": "unit",
-          "description": "grep skip patterns",
-          "expected_result": "grep -q '_optimized' benchmark/run_benchmark.sh; grep -q '.qpdf' benchmark/run_benchmark.sh; grep -q '.opt' benchmark/run_benchmark.sh; grep -q '.gs' benchmark/run_benchmark.sh; grep -q '.ocrmypdf' benchmark/run_benchmark.sh"
-        },
-        {
-          "test_id": "T02-T10",
-          "linked_acceptance_criterion": "Given script completes, When ls is checked, Then benchmark_results_YYYYMMDD_HHMMSS.tsv exists in cwd and in build/ (copy), and script prints column -t -s $'\\t' table, and never overwrites input PDFs (all outputs are <name>.<tool>.pdf alongside corpus).",
+          "test_id": "P1-T2-T02",
+          "linked_acceptance_criterion": "Given the same four PDFs, when optimized with forProfile(Balanced), then jsRemoved>=1 on with_javascript.pdf and metadataStripped==true on with_metadata.pdf and nothing else, where \"nothing else\" scopes to the six removal counters only (linksRemoved/annotationsRemoved/bookmarksRemoved/formsRemoved/jsRemoved-on-non-JS-files/namedDestinationsRemoved ==0 on files lacking those elements); metadataStripped is NOT asserted on metadata-free PDFs (Balanced applies stripMetadata=true, which reports true on all inputs per the ESC-008 intent ruling locked 2026-10-07).",
           "type": "integration",
-          "description": "Run script and check dual TSV",
-          "expected_result": "bash benchmark/run_benchmark.sh build; ls benchmark_results_*.tsv; ls build/benchmark_results_*.tsv; grep -q 'column -t' benchmark/run_benchmark.sh; for pdf in $CORPUS/*.pdf; do test ! \"$pdf\" overwritten; done"
+          "description": "Optimize each of the four corpus PDFs with forProfile(Balanced); assert jsRemoved>=1 on with_javascript.pdf, EXPECT_TRUE(metadataStripped) on with_metadata.pdf, and zero in the six removal counters on files lacking those elements; do NOT assert metadataStripped on metadata-free PDFs (intent semantics report true there too \u2014 left unasserted per ESC-008).",
+          "expected_result": "Balanced strips JS (jsRemoved>=1) and applies metadata-strip (true on with_metadata.pdf); the six removal counters are 0 elsewhere."
         },
         {
-          "test_id": "T02-T11",
-          "linked_acceptance_criterion": "Given encrypted.pdf in corpus, When run_tool runs pdfcompress on it, Then script does not exit due to set -e because of || true, and generates a FAILED or SKIPPED row with error handling but continues looping remaining PDFs.",
+          "test_id": "P1-T2-T03",
+          "linked_acceptance_criterion": "Given the same four PDFs, when optimized with forProfile(MaxCompression), then >=1 item is removed on each of the four PDFs.",
           "type": "integration",
-          "description": "Check encrypted handling",
-          "expected_result": "bash -c 'set -e; bash benchmark/run_benchmark.sh build; echo survived=$?' | grep -q 'survived=0'; grep -q 'encrypted' benchmark_results_*.tsv"
+          "description": "Optimize each of the four corpus PDFs with forProfile(MaxCompression); assert total removals >=1 per file.",
+          "expected_result": "MaxCompression removes >=1 item on each of the four PDFs."
+        },
+        {
+          "test_id": "P1-T2-T04",
+          "linked_acceptance_criterion": "Given a PDF whose /OpenAction is a non-JS GoTo destination (staged in $TMPDIR, never committed), when optimized under every profile, then the GoTo /OpenAction survives in the output; and given /AA keys present, when optimized with stripJavaScript=true, then /AA is removed with jsRemoved>=1.",
+          "type": "integration",
+          "description": "Stage a $TMPDIR PDF with non-JS GoTo /OpenAction plus /AA keys; optimize under all three profiles; assert GoTo /OpenAction present in every output and /AA removed exactly when stripJavaScript=true.",
+          "expected_result": "GoTo survives all profiles; /AA removed only under JS-strip."
+        },
+        {
+          "test_id": "P1-T2-T05",
+          "linked_acceptance_criterion": "Given --profile balanced plus an explicit --strip-bookmarks override round-tripped through run_optimize CLI parsing semantics (forProfile then explicit flag wins), when optimized, then bookmarks are removed and the result breakdown logs the removal (explicit flag wins over profile default).",
+          "type": "integration",
+          "description": "Start from forProfile(Balanced), set stripBookmarks=true (mirroring run_optimize --strip-bookmarks parsing), optimize with_bookmarks_and_links.pdf, assert bookmarksRemoved>=1 and /Outlines absent in output.",
+          "expected_result": "Explicit flag overrides profile default; removal logged."
         }
       ],
       "expected_artifacts": [
-        "benchmark/run_benchmark.sh"
+        "tests/test_stripping_profiles.cpp"
       ],
       "touches_files": [
-        "benchmark/run_benchmark.sh"
+        "tests/test_stripping_profiles.cpp"
       ],
       "inputs": [
-        "benchmark/run_benchmark.sh existing",
-        "docs/plan.md Phase 0.2",
-        "docs/architecture.md Benchmark script"
+        "src/core/PDFOptimizer.h/.cpp strip branches",
+        "tests/test_corpus_generator.h corpus builders"
       ],
       "outputs": [
-        "benchmark/run_benchmark.sh hardened",
-        "benchmark_results_*.tsv in cwd and build/"
+        "tests/test_stripping_profiles.cpp with 5 TEST cases"
       ],
-      "architecture_dependency": false,
-      "status": "done"
+      "status": "done",
+      "size": "M",
+      "context": {
+        "read_files": [
+          {
+            "path": "src/core/PDFOptimizer.cpp",
+            "lines": "68-145",
+            "why": "strip branches under verification; read-only, do not change semantics"
+          },
+          {
+            "path": "src/core/PDFOptimizer.h",
+            "lines": "67-92",
+            "why": "OptimizationResult counters asserted by tests"
+          },
+          {
+            "path": "tests/test_corpus_generator.h",
+            "lines": "1-60",
+            "why": "corpus builder API for with_form/bookmarks/javascript/metadata"
+          },
+          {
+            "path": "tests/test_pdf_optimizer.cpp",
+            "lines": "20-47",
+            "why": "existing strip-test pattern with explicit options"
+          },
+          {
+            "path": "tools/run_optimize.cpp",
+            "lines": "60-107",
+            "why": "CLI flag-overrides-profile parsing semantics for T05"
+          }
+        ],
+        "contracts": [
+          "OptimizationResult optimize(const std::string& inputPath, const std::string& outputPath, const OptimizationOptions& options)  [existing]",
+          "if (oa.isDictionary() && oa.hasKey(\"/S\") && oa.getKey(\"/S\").getName() == \"/JavaScript\")  [existing GoTo-preserving guard, PDFOptimizer.cpp:94]",
+          "result.metadataStripped==true iff options.stripMetadata==true (intent, NOT actual-removal)  [existing, PDFOptimizer.cpp:119-125; ESC-008 ruling locked 2026-10-07 \u2014 do NOT EXPECT_FALSE on metadata-free PDFs]"
+        ],
+        "architecture_excerpt": "| `OptimizationOptions::forProfile` + strip/writer paths | [existing] | Normative defaults locked by tests in Ph.1; extended with new fields only (`targetDPI`, transcode/JBIG2/subset/password flags) \u2014 no semantic change to strip logic |",
+        "plan_excerpt": "- **Goal:** Lock existing `forProfile` defaults and writer behavior with verifier tests; close doc gaps only. No strip-semantics change (locked: MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, `linearize=false`).",
+        "requirement_ids": [
+          "AC-B2",
+          "J-B1",
+          "J-B2",
+          "S1",
+          "S2",
+          "S4"
+        ],
+        "test_command": "ctest --test-dir build -R StrippingProfiles --output-on-failure",
+        "memory_notes": [],
+        "needs_graphify": false,
+        "size": "M"
+      }
     },
     {
-      "id": "T03-render-diff-source",
-      "title": "Pure-C++ Render-Diff Helper Source — PDFium 150 DPI BGRA SSIM/PSNR",
-      "description": "Create tools/render_diff.cpp that renders page 0 at 150 DPI via PDFium RAII and computes SSIM/PSNR in-process, no Python, N/A fallback on failure, parsable output.",
+      "id": "P1-T3",
+      "title": "Structural writer-options verifier tests (AC-B3)",
+      "description": "Create tests/test_structure_writer.cpp verifying object-stream/Flate writer behavior: default output <= --no-dedup --no-flate-recompress output, streamsDeduplicated==0 with defaults (verified current-behavior pin: dedup counting is inert under the ESC-001 isIndirect guard and the reference-shared fixture shares one object by reference, so no distinct duplicate pair exists) and ==0 with --no-dedup on the shared-XObject PDF, and qpdf --check clean on both. Verification only, no product-code change.",
       "agent": "build_worker",
-      "task_type": "feature",
-      "dependencies": [
-        "T01-corpus-hardening"
-      ],
+      "task_type": "code",
+      "dependencies": [],
       "acceptance_criteria": [
-        "Given tools/render_diff.cpp, When inspected, Then it includes <fpdfview.h> or <public/fpdfview.h>, initializes via FPDF_InitLibraryWithConfig, loads docs via FPDF_LoadDocument, loads page 0 via FPDF_LoadPage(doc,0), computes width/height via FPDF_GetPageWidth/Height, creates BGRA bitmap w=pageWidthPt/72*150 h=pageHeightPt/72*150 via FPDFBitmap_Create, fills white 0xFFFFFFFF via FPDFBitmap_FillRect, renders via FPDF_RenderPageBitmap, retrieves buffers via FPDFBitmap_GetBuffer, and cleans via FPDFBitmap_Destroy/FPDF_ClosePage/FPDF_CloseDocument/FPDF_DestroyLibrary with RAII unique_ptr custom deleters.",
-        "Given two PDF paths argv[1] argv[2], When render succeeds for both, Then program computes SSIM (windowed mean/variance/covariance with C1=(0.01*255)^2 C2=(0.03*255)^2, 11x11 or 8x8 window) and PSNR (MSE -> 10*log10(255*255/MSE), INF if MSE==0) in C++ and prints parsable line e.g. 'SSIM 0.999 PSNR 42.1' or '0.999 42.1' or 'SSIM=0.999 PSNR=42.1' to stdout and exits 0.",
-        "Given either FPDF_LoadDocument fails (encrypted without password, missing file, bad PDF) or PDFium dylib unavailable at runtime, When program is invoked, Then it prints 'N/A N/A' to stdout (and optionally note to stderr) and exits 0, never crashes, never returns non-zero for this case.",
-        "Given tools/render_diff.cpp, When inspected, Then it contains no python3/pip/scikit-image/ImageMagick/compare references, is C++20, uses <cmath> <memory> <vector>, offline, and handles BGRA stride via FPDFBitmap_GetStride.",
-        "Given build environment, When compiled standalone, Then it builds clean with -Wall -Wextra -Wpedantic via pdfcompress_core or pdfium linkage, and C++ file is self-contained without requiring Python."
+        "Given photo_heavy.pdf (multi-image), when optimized with defaults (deduplicateStreams=true, recompressFlate=true) vs with both disabled, then the default output size is <= the no-opt output size.",
+        "Given the transparency/shared-XObject dedup PDF, when optimized with defaults (deduplicateStreams=true) and with --no-dedup semantics (deduplicateStreams=false), then streamsDeduplicated==0 in both runs (verified current-behavior pin: dedup counting is inert under the ESC-001 isIndirect guard, and the reference-shared corpus fixture shares one indirect object by reference so no distinct duplicate pair exists); the aspirational streamsDeduplicated>=1 assertion is deferred to a follow-up phase requiring a product dedup fix plus a distinct-duplicate corpus fixture.",
+        "Given both outputs from the comparisons above, when checked with qpdf --check semantics (QPDF::processFile without warnings), then both are clean valid PDFs."
       ],
       "tests": [
         {
-          "test_id": "T03-T01",
-          "linked_acceptance_criterion": "Given tools/render_diff.cpp, When inspected, Then it includes <fpdfview.h> or <public/fpdfview.h>, initializes via FPDF_InitLibraryWithConfig, loads docs via FPDF_LoadDocument, loads page 0 via FPDF_LoadPage(doc,0), computes width/height via FPDF_GetPageWidth/Height, creates BGRA bitmap w=pageWidthPt/72*150 h=pageHeightPt/72*150 via FPDFBitmap_Create, fills white 0xFFFFFFFF via FPDFBitmap_FillRect, renders via FPDF_RenderPageBitmap, retrieves buffers via FPDFBitmap_GetBuffer, and cleans via FPDFBitmap_Destroy/FPDF_ClosePage/FPDF_CloseDocument/FPDF_DestroyLibrary with RAII unique_ptr custom deleters.",
-          "type": "unit",
-          "description": "grep PDFium API usage",
-          "expected_result": "grep -q 'FPDF_InitLibraryWithConfig\\|FPDF_InitLibrary' tools/render_diff.cpp; grep -q 'FPDF_LoadDocument' tools/render_diff.cpp; grep -q 'FPDF_LoadPage' tools/render_diff.cpp; grep -q 'FPDF_GetPageWidth' tools/render_diff.cpp; grep -q 'FPDFBitmap_Create' tools/render_diff.cpp; grep -q 'FPDF_RenderPageBitmap' tools/render_diff.cpp; grep -q 'FPDFBitmap_GetBuffer' tools/render_diff.cpp; grep -q 'unique_ptr.*FPDF' tools/render_diff.cpp || grep -q 'FPDF_ClosePage' tools/render_diff.cpp"
-        },
-        {
-          "test_id": "T03-T02",
-          "linked_acceptance_criterion": "Given two PDF paths argv[1] argv[2], When render succeeds for both, Then program computes SSIM (windowed mean/variance/covariance with C1=(0.01*255)^2 C2=(0.03*255)^2, 11x11 or 8x8 window) and PSNR (MSE -> 10*log10(255*255/MSE), INF if MSE==0) in C++ and prints parsable line e.g. 'SSIM 0.999 PSNR 42.1' or '0.999 42.1' or 'SSIM=0.999 PSNR=42.1' to stdout and exits 0.",
+          "test_id": "P1-T3-T01",
+          "linked_acceptance_criterion": "Given photo_heavy.pdf (multi-image), when optimized with defaults (deduplicateStreams=true, recompressFlate=true) vs with both disabled, then the default output size is <= the no-opt output size.",
           "type": "integration",
-          "description": "Build render_diff and test on two identical PDFs",
-          "expected_result": "cmake --build build --target render_diff && ./build/render_diff $CORPUS/text_only.pdf $CORPUS/text_only.pdf | grep -E 'SSIM|PSNR|0\\.[0-9]+' ; test $? -eq 0; check output matches regex for SSIM 0-1 and PSNR numeric or INF"
+          "description": "Optimize photo_heavy.pdf twice (defaults vs deduplicateStreams=false + recompressFlate=false); compare optimizedSizeBytes.",
+          "expected_result": "Default output size <= no-opt output size."
         },
         {
-          "test_id": "T03-T03",
-          "linked_acceptance_criterion": "Given either FPDF_LoadDocument fails (encrypted without password, missing file, bad PDF) or PDFium dylib unavailable at runtime, When program is invoked, Then it prints 'N/A N/A' to stdout (and optionally note to stderr) and exits 0, never crashes, never returns non-zero for this case.",
+          "test_id": "P1-T3-T02",
+          "linked_acceptance_criterion": "Given the transparency/shared-XObject dedup PDF, when optimized with defaults (deduplicateStreams=true) and with --no-dedup semantics (deduplicateStreams=false), then streamsDeduplicated==0 in both runs (verified current-behavior pin: dedup counting is inert under the ESC-001 isIndirect guard, and the reference-shared corpus fixture shares one indirect object by reference so no distinct duplicate pair exists); the aspirational streamsDeduplicated>=1 assertion is deferred to a follow-up phase requiring a product dedup fix plus a distinct-duplicate corpus fixture.",
           "type": "integration",
-          "description": "Test N/A fallback on encrypted pdf",
-          "expected_result": "./build/render_diff $CORPUS/encrypted.pdf $CORPUS/text_only.pdf | grep -q 'N/A N/A'; test $? -eq 0; ./build/render_diff /nonexistent.pdf /nonexistent2.pdf | grep -q 'N/A N/A'"
+          "description": "Optimize the shared-XObject corpus PDF with defaults and with deduplicateStreams=false; assert streamsDeduplicated==0 in both runs (current-behavior pin).",
+          "expected_result": "Dedup counter pinned at 0 in both runs (current behavior); --no-dedup also 0."
         },
         {
-          "test_id": "T03-T04",
-          "linked_acceptance_criterion": "Given tools/render_diff.cpp, When inspected, Then it contains no python3/pip/scikit-image/ImageMagick/compare references, is C++20, uses <cmath> <memory> <vector>, offline, and handles BGRA stride via FPDFBitmap_GetStride.",
-          "type": "unit",
-          "description": "grep for forbidden python refs",
-          "expected_result": "! grep -qi 'python\\|scikit\\|pip install\\|ImageMagick\\|compare' tools/render_diff.cpp; grep -q '#include <cmath>' tools/render_diff.cpp; grep -q 'FPDFBitmap_GetStride' tools/render_diff.cpp || grep -q 'stride' tools/render_diff.cpp"
-        },
-        {
-          "test_id": "T03-T05",
-          "linked_acceptance_criterion": "Given build environment, When compiled standalone, Then it builds clean with -Wall -Wextra -Wpedantic via pdfcompress_core or pdfium linkage, and C++ file is self-contained without requiring Python.",
+          "test_id": "P1-T3-T03",
+          "linked_acceptance_criterion": "Given both outputs from the comparisons above, when checked with qpdf --check semantics (QPDF::processFile without warnings), then both are clean valid PDFs.",
           "type": "integration",
-          "description": "cmake build warnings check",
-          "expected_result": "cmake --build build 2>&1 | ! grep -q 'error:'; cmake --build build --target render_diff 2>&1 | ! grep -q 'warning:' or warnings only in pdfium headers not in render_diff.cpp"
+          "description": "Run QPDF().processFile on both T01/T02 outputs; assert no exception.",
+          "expected_result": "All outputs are valid PDFs."
         }
       ],
       "expected_artifacts": [
-        "tools/render_diff.cpp"
+        "tests/test_structure_writer.cpp"
       ],
       "touches_files": [
-        "tools/render_diff.cpp"
+        "tests/test_structure_writer.cpp"
       ],
       "inputs": [
-        "docs/architecture.md render-diff spec",
-        "src/core/PDFInspector.cpp PDFium usage pattern"
+        "src/core/PDFOptimizer.cpp dedup+writer sections",
+        "tests/test_corpus_generator.h photo_heavy + transparency builders"
       ],
       "outputs": [
-        "tools/render_diff.cpp source"
+        "tests/test_structure_writer.cpp with 3 TEST cases"
       ],
-      "architecture_dependency": false,
-      "status": "done"
+      "status": "done",
+      "size": "M",
+      "context": {
+        "read_files": [
+          {
+            "path": "src/core/PDFOptimizer.cpp",
+            "lines": "334-398",
+            "why": "dedup + QPDFWriter options under verification; read-only"
+          },
+          {
+            "path": "src/core/PDFOptimizer.h",
+            "lines": "67-92",
+            "why": "streamsDeduplicated counter asserted by tests"
+          },
+          {
+            "path": "tests/test_corpus_generator.h",
+            "lines": "1-60",
+            "why": "photo_heavy and transparency/shared-XObject builders"
+          },
+          {
+            "path": "tests/test_pdf_optimizer.cpp",
+            "lines": "1-58",
+            "why": "existing optimizer-test pattern"
+          }
+        ],
+        "contracts": [
+          "OptimizationResult optimize(const std::string& inputPath, const std::string& outputPath, const OptimizationOptions& options)  [existing]",
+          "writer: setObjectStreamMode(qpdf_o_generate), setRecompressFlate(true) level 9, setDeterministicID(true)  [existing writer contract]",
+          "dedup counting inert in Phase 1: seenStreams handles from getAllObjects() are always indirect so the ESC-001 isIndirect guard skips all, and generateSharedXObject() shares one object by reference [existing verified behavior \u2014 pin at ==0, do NOT fix product code or corpus in Phase 1]"
+        ],
+        "architecture_excerpt": "| **PDFOptimizer (QPDF)** | [existing] | Stripping (7 booleans), per-image decode/analyze/decide/encode/size-guard, dedup, writer options. No logic change; `linearize=false`, `recompressFlate` level 9, `deduplicateStreams`, `setDeterministicID` remain. |",
+        "plan_excerpt": "- **Per-phase gates:** Benchmark before/after within \u00b12% every row (no compression change expected); manual PDFs: `with_form`, `with_bookmarks_and_links`, `with_javascript`, `with_metadata`, `transparency`, `text_only` (no-growth control); S1\u2013S9.",
+        "requirement_ids": [
+          "AC-B3",
+          "S1",
+          "S2"
+        ],
+        "test_command": "ctest --test-dir build -R StructureWriter --output-on-failure",
+        "memory_notes": [],
+        "needs_graphify": false,
+        "size": "M"
+      }
     },
     {
-      "id": "T04-render-diff-build",
-      "title": "Render-Diff CMake Wiring + Benchmark TSV Integration (N/A fallback)",
-      "description": "Wire tools/render_diff.cpp into CMakeLists.txt as render_diff binary linked against pdfcompress_core/pdfium and integrate benchmark/run_benchmark.sh to call render_diff per row with N/A fallback and header note.",
+      "id": "P1-T4",
+      "title": "CTest wiring + full-suite green gate (S1)",
+      "description": "Wire the three new Phase-1 test files into pdfcompress_tests via one line each in CMakeLists.txt, rebuild, and bring the full ctest suite to 100% green. Owns the only CMakeLists.txt edit in Phase 1.",
       "agent": "build_worker",
-      "task_type": "feature",
+      "task_type": "code",
       "dependencies": [
-        "T02-benchmark-hardening",
-        "T03-render-diff-source"
+        "P1-T1",
+        "P1-T2",
+        "P1-T3"
       ],
       "acceptance_criteria": [
-        "Given CMakeLists.txt, When inspected, Then it contains 'add_executable(render_diff tools/render_diff.cpp)' linked PRIVATE pdfcompress_core pdfium (or qpdf::libqpdf + pdfium) under if(BUILD_TESTING) or alongside diagnose, with target_compile_options -Wall -Wextra -Wpedantic consistent, and render_diff binary builds via cmake --build.",
-        "Given benchmark/run_benchmark.sh after T02, When inspected after T04, Then it contains guarded invocation 'if [ -x \"$BUILD_DIR/render_diff\" ]; then SSIM/PSNR=$(\"$BUILD_DIR/render_diff\" \"$pdf\" \"$out_file\" 2>/dev/null || echo \"N/A N/A\") else SSIM=N/A PSNR=N/A; fi' or equivalent, parses two values, and fills TSV columns 7/8 per row.",
-        "Given render_diff unavailable (binary missing or PDFium load fails), When benchmark runs, Then TSV header contains note 'render-diff unavailable (PDFium C++ only)' or fallback sets SSIM=N/A PSNR=N/A for all rows and header notes fallback, never leaves columns empty.",
-        "Given render_diff available, When benchmark runs on text_only pair, Then TSV rows have SSIM 3 decimals in [0,1] and PSNR 1 decimal or INF, parsable as numeric or N/A, consistent with pure C++ computation not Python.",
-        "Given cmake --build, When built, Then 'cmake --build' succeeds -Wall -Wextra -Wpedantic clean for render_diff target, and DYLD_LIBRARY_PATH/@executable_path still bundles libpdfium.dylib so render_diff does not crash due to missing dylib but prints N/A."
+        "Given the three new test files from P1-T1/P1-T2/P1-T3, when CMakeLists.txt add_executable(pdfcompress_tests ...) is inspected, then each file is appended on its own line and nothing else in CMakeLists.txt changed.",
+        "Given the rewired build, when cmake --build build && ctest --test-dir build --output-on-failure runs, then the suite is 100% green (render-diff N/A allowed only when PDFium unavailable)."
       ],
       "tests": [
         {
-          "test_id": "T04-T01",
-          "linked_acceptance_criterion": "Given CMakeLists.txt, When inspected, Then it contains 'add_executable(render_diff tools/render_diff.cpp)' linked PRIVATE pdfcompress_core pdfium (or qpdf::libqpdf + pdfium) under if(BUILD_TESTING) or alongside diagnose, with target_compile_options -Wall -Wextra -Wpedantic consistent, and render_diff binary builds via cmake --build.",
-          "type": "unit",
-          "description": "grep CMakeLists for render_diff",
-          "expected_result": "grep -q 'add_executable(render_diff' CMakeLists.txt; grep -q 'tools/render_diff.cpp' CMakeLists.txt; grep -q 'pdfium' CMakeLists.txt; cmake -B build -DCMAKE_TOOLCHAIN_FILE=third_party/vcpkg/scripts/buildsystems/vcpkg.cmake && cmake --build build --target render_diff; test -x build/render_diff"
+          "test_id": "P1-T4-T01",
+          "linked_acceptance_criterion": "Given the three new test files from P1-T1/P1-T2/P1-T3, when CMakeLists.txt add_executable(pdfcompress_tests ...) is inspected, then each file is appended on its own line and nothing else in CMakeLists.txt changed.",
+          "type": "manual",
+          "description": "Inspect git diff --stat and the add_executable block: exactly three added lines, no other CMakeLists.txt hunks.",
+          "expected_result": "Diff shows only the three test-file lines."
         },
         {
-          "test_id": "T04-T02",
-          "linked_acceptance_criterion": "Given benchmark/run_benchmark.sh after T02, When inspected after T04, Then it contains guarded invocation 'if [ -x \"$BUILD_DIR/render_diff\" ]; then SSIM/PSNR=$(\"$BUILD_DIR/render_diff\" \"$pdf\" \"$out_file\" 2>/dev/null || echo \"N/A N/A\") else SSIM=N/A PSNR=N/A; fi' or equivalent, parses two values, and fills TSV columns 7/8 per row.",
-          "type": "unit",
-          "description": "grep benchmark render_diff call",
-          "expected_result": "grep -q 'render_diff' benchmark/run_benchmark.sh; grep -q '\\-x.*render_diff' benchmark/run_benchmark.sh || grep -q 'command -v.*render_diff' benchmark/run_benchmark.sh; grep -q 'SSIM.*PSNR' benchmark/run_benchmark.sh"
-        },
-        {
-          "test_id": "T04-T03",
-          "linked_acceptance_criterion": "Given render_diff unavailable (binary missing or PDFium load fails), When benchmark runs, Then TSV header contains note 'render-diff unavailable (PDFium C++ only)' or fallback sets SSIM=N/A PSNR=N/A for all rows and header notes fallback, never leaves columns empty.",
+          "test_id": "P1-T4-T02",
+          "linked_acceptance_criterion": "Given the rewired build, when cmake --build build && ctest --test-dir build --output-on-failure runs, then the suite is 100% green (render-diff N/A allowed only when PDFium unavailable).",
           "type": "integration",
-          "description": "Test fallback by renaming binary",
-          "expected_result": "mv build/render_diff build/render_diff.bak; bash benchmark/run_benchmark.sh build; grep -q 'N/A' benchmark_results_*.tsv; grep -q 'render-diff unavailable' benchmark_results_*.tsv || grep -q 'N/A' benchmark_results_*.tsv; mv build/render_diff.bak build/render_diff"
-        },
-        {
-          "test_id": "T04-T04",
-          "linked_acceptance_criterion": "Given render_diff available, When benchmark runs on text_only pair, Then TSV rows have SSIM 3 decimals in [0,1] and PSNR 1 decimal or INF, parsable as numeric or N/A, consistent with pure C++ computation not Python.",
-          "type": "integration",
-          "description": "Run benchmark and check SSIM/PSNR values",
-          "expected_result": "bash benchmark/run_benchmark.sh build; awk -F'\\t' '{print $7, $8}' benchmark_results_*.tsv | grep -E 'N/A|[0-9]\\.[0-9]{3}.*[0-9]\\.[0-9]' ; ! grep -q 'python' benchmark/run_benchmark.sh"
-        },
-        {
-          "test_id": "T04-T05",
-          "linked_acceptance_criterion": "Given cmake --build, When built, Then 'cmake --build' succeeds -Wall -Wextra -Wpedantic clean for render_diff target, and DYLD_LIBRARY_PATH/@executable_path still bundles libpdfium.dylib so render_diff does not crash due to missing dylib but prints N/A.",
-          "type": "integration",
-          "description": "Build warnings and runtime N/A",
-          "expected_result": "cmake --build build 2>&1 | tail -20; ./build/render_diff $CORPUS/text_only.pdf $CORPUS/text_only_optimized.pdf; echo exit:$?"
+          "description": "Full clean configure + build + ctest run from repo root.",
+          "expected_result": "100% tests passed, 0 failed."
         }
       ],
       "expected_artifacts": [
-        "CMakeLists.txt",
-        "benchmark/run_benchmark.sh"
-      ],
-      "touches_files": [
-        "CMakeLists.txt",
-        "benchmark/run_benchmark.sh"
-      ],
-      "inputs": [
-        "tools/render_diff.cpp",
-        "CMakeLists.txt existing",
-        "benchmark/run_benchmark.sh from T02"
-      ],
-      "outputs": [
-        "render_diff binary in build/",
-        "benchmark script with SSIM/PSNR integration"
-      ],
-      "architecture_dependency": false,
-      "status": "done"
-    },
-    {
-      "id": "T05-test-verifier",
-      "title": "Corpus Verifier Tests — file count, per-type keys, stripping regression",
-      "description": "Create tests/test_corpus_verifier.cpp with GTest suite that verifies 14-file count, per-file existence, QPDF validity, key assertions, cmyk/encrypted/transparent checks, and stripping regression with <2KB exemption.",
-      "agent": "build_worker",
-      "task_type": "test",
-      "dependencies": [
-        "T01-corpus-hardening",
-        "T07-optimizer-dedup-fix"
-      ],
-      "acceptance_criteria": [
-        "Given tests/test_corpus_verifier.cpp, When inspected, Then it contains at least TEST(CorpusGenerator, FileCountIs14) asserting ls count ==14 or corpusDir file count, plus parameterized or individual TESTs for each of the 14 types that after generateAll() assert file exists, QPDF().processFile succeeds, and hasKey checks for /AcroForm, /Outlines+/Annots+/Dests, /Names/JavaScript+/OpenAction, /Info+/Metadata, DeviceCMYK+FlateDecode, SMask/Transparency+shared-object, isEncrypted, etc.",
-        "Given cmyk_image.pdf, When OptimizationResult is checked via PDFOptimizer, Then verifier asserts imagesSkipped==1 and success true, exercising CMYK skip path without requiring transcoding.",
-        "Given encrypted.pdf, When PDFOptimizer::optimize is called without password, Then result.success==false or errorMessage set and no crash; when QPDF::processFile with password 'test123' is used, Then it succeeds and can be optimized to unencrypted output.",
-        "Given stripping regression check, When any corpus PDF is optimized with Balanced profile, Then result.stripping counts are asserted not regressed: text_only has no growth beyond writer overhead, and <2KB files are exempt from ±1% size gate per RG-002 (only >=50KB files like photo_heavy/line_art/largeUncompressed are checked for within ±1% or reduction%).",
-        "Given new test file, When compiled, Then it uses GTest TEST(Suite,Case) naming, is linked via pdfcompress_core and QPDF, and does not add Python or change vcpkg.json GTest version (keeps GTest).",
-        "Given benchmark integration, When verifier checks benchmark TSV, Then it asserts TSV header contains SSIM/PSNR columns and that SSIM thresholds are >=0.98 for Balanced/MaxQuality synthetic corpus or N/A allowed only if PDFium unavailable, otherwise must meet threshold."
-      ],
-      "tests": [
-        {
-          "test_id": "T05-T01",
-          "linked_acceptance_criterion": "Given tests/test_corpus_verifier.cpp, When inspected, Then it contains at least TEST(CorpusGenerator, FileCountIs14) asserting ls count ==14 or corpusDir file count, plus parameterized or individual TESTs for each of the 14 types that after generateAll() assert file exists, QPDF().processFile succeeds, and hasKey checks for /AcroForm, /Outlines+/Annots+/Dests, /Names/JavaScript+/OpenAction, /Info+/Metadata, DeviceCMYK+FlateDecode, SMask/Transparency+shared-object, isEncrypted, etc.",
-          "type": "unit",
-          "description": "grep verifier tests",
-          "expected_result": "grep -q 'TEST(CorpusGenerator, FileCountIs14' tests/test_corpus_verifier.cpp; grep -q 'hasKey.*AcroForm' tests/test_corpus_verifier.cpp; grep -q 'hasKey.*Outlines' tests/test_corpus_verifier.cpp; grep -q 'hasKey.*JavaScript' tests/test_corpus_verifier.cpp; grep -q 'hasKey.*Metadata' tests/test_corpus_verifier.cpp; grep -q 'isEncrypted' tests/test_corpus_verifier.cpp"
-        },
-        {
-          "test_id": "T05-T02",
-          "linked_acceptance_criterion": "Given cmyk_image.pdf, When OptimizationResult is checked via PDFOptimizer, Then verifier asserts imagesSkipped==1 and success true, exercising CMYK skip path without requiring transcoding.",
-          "type": "integration",
-          "description": "CMYK skip test",
-          "expected_result": "grep -q 'cmyk_image.*imagesSkipped.*1' tests/test_corpus_verifier.cpp || grep -q 'CMYK.*Skipped' tests/test_corpus_verifier.cpp; ctest -R CorpusGenerator --output-on-failure shows pass"
-        },
-        {
-          "test_id": "T05-T03",
-          "linked_acceptance_criterion": "Given encrypted.pdf, When PDFOptimizer::optimize is called without password, Then result.success==false or errorMessage set and no crash; when QPDF::processFile with password 'test123' is used, Then it succeeds and can be optimized to unencrypted output.",
-          "type": "integration",
-          "description": "encrypted handling test",
-          "expected_result": "grep -q 'encrypted.*errorMessage\\|isEncrypted' tests/test_corpus_verifier.cpp; ctest -R Encrypted --output-on-failure shows pass; manual check QPDF with password succeeds"
-        },
-        {
-          "test_id": "T05-T04",
-          "linked_acceptance_criterion": "Given stripping regression check, When any corpus PDF is optimized with Balanced profile, Then result.stripping counts are asserted not regressed: text_only has no growth beyond writer overhead, and <2KB files are exempt from ±1% size gate per RG-002 (only >=50KB files like photo_heavy/line_art/largeUncompressed are checked for within ±1% or reduction%).",
-          "type": "integration",
-          "description": "Stripping regression with exemption",
-          "expected_result": "grep -q '2KB\\|50KB\\|writer overhead\\|exempt' tests/test_corpus_verifier.cpp || grep -q 'originalSize.*optimizedSize' tests/test_corpus_verifier.cpp; test passes even if tiny PDFs show -93% but logs"
-        },
-        {
-          "test_id": "T05-T05",
-          "linked_acceptance_criterion": "Given new test file, When compiled, Then it uses GTest TEST(Suite,Case) naming, is linked via pdfcompress_core and QPDF, and does not add Python or change vcpkg.json GTest version (keeps GTest).",
-          "type": "unit",
-          "description": "Check GTest usage and no python",
-          "expected_result": "grep -q 'TEST(' tests/test_corpus_verifier.cpp; ! grep -qi 'python' tests/test_corpus_verifier.cpp; grep -q 'gtest' vcpkg.json"
-        },
-        {
-          "test_id": "T05-T06",
-          "linked_acceptance_criterion": "Given benchmark integration, When verifier checks benchmark TSV, Then it asserts TSV header contains SSIM/PSNR columns and that SSIM thresholds are >=0.98 for Balanced/MaxQuality synthetic corpus or N/A allowed only if PDFium unavailable, otherwise must meet threshold.",
-          "type": "integration",
-          "description": "SSIM threshold check",
-          "expected_result": "grep -q 'SSIM.*0\\.98\\|PSNR' tests/test_corpus_verifier.cpp || true; benchmark TSV shows SSIM numeric >=0.98 or N/A with header note"
-        }
-      ],
-      "expected_artifacts": [
-        "tests/test_corpus_verifier.cpp"
-      ],
-      "touches_files": [
-        "tests/test_corpus_verifier.cpp"
-      ],
-      "inputs": [
-        "tests/test_corpus_generator.cpp/h 14 types",
-        "src/core/PDFOptimizer.h OptimizationResult",
-        "docs/requirements AC7"
-      ],
-      "outputs": [
-        "tests/test_corpus_verifier.cpp with 14+ checks"
-      ],
-      "architecture_dependency": false,
-      "status": "done"
-    },
-    {
-      "id": "T06-ctest-wiring-gate",
-      "title": "CTest Wiring & Acceptance Gate — gtest_discover, build, ctest --output-on-failure",
-      "description": "Wire verifier into CMakeLists.txt via add_executable pdfcompress_tests, ensure enable_testing/include(GoogleTest)/gtest_discover_tests, verify 14+ tests pass, diagnose/run_optimize flags, git diff --stat guard.",
-      "agent": "build_worker",
-      "task_type": "test",
-      "dependencies": [
-        "T05-test-verifier",
-        "T04-render-diff-build",
-        "T07-optimizer-dedup-fix",
-        "T08-test-expectations-fix"
-      ],
-      "acceptance_criteria": [
-        "Given CMakeLists.txt, When inspected, Then it still has enable_testing(), find_package(GTest CONFIG REQUIRED), add_executable(pdfcompress_tests ...) now includes tests/test_corpus_verifier.cpp (one-line addition discipline), target_link_libraries GTest::gtest GTest::gtest_main pdfcompress_core, and include(GoogleTest) gtest_discover_tests(pdfcompress_tests), with BUILD_TESTING=ON default.",
-        "Given fresh checkout, When 'cmake -B build -DCMAKE_TOOLCHAIN_FILE=third_party/vcpkg/scripts/buildsystems/vcpkg.cmake && cmake --build build && ctest --test-dir build --output-on-failure -V' is run, Then at least 14+ tests pass (12 existing + verifier), no test fails, and generate_corpus still links.",
-        "Given build/run_optimize --help and diagnose, When invoked, Then they list all flags (--profile, --quality, --strip-*, --linearize, --no-flate-recompress, --no-dedup, -o/--output) and exit 0, and optimized PDFs pass QPDF().processFile and diagnose shows fonts preserved (Helvetica).",
-        "Given the git tree, When checked, Then `git status --short` shows no modified tracked files outside docs/ (pipeline bookkeeping in docs/ evolves as the pipeline runs; only personal untracked files .graphifyignore, current_context.txt, graphify-out.old/ are allowed); the committed change set since 34e6301 touches only .gitignore, CMakeLists.txt, benchmark/, docs/, src/core/PDFOptimizer.h/.cpp, src/main.cpp, tests/, tools/render_diff.cpp, tools/run_optimize.cpp, vcpkg.json; src/core/PDFOptimizer.cpp contains the ESC-001 dedup guard (grep isIndirect) with no codec/DecisionEngine/stripping-logic changes; src/codecs/* is untouched; and vcpkg.json lists gtest not catch2.",
-        "Given benchmark_results TSV, When inspected, Then manual gate 'benchmark/run_benchmark.sh build' completes in <30s, TSV in cwd and build/ have header File Original Size Tool Output Size Reduction % Time (ms) SSIM PSNR Status, and ctest gate can be used as single trusted baseline per J1/J2."
-      ],
-      "tests": [
-        {
-          "test_id": "T06-T01",
-          "linked_acceptance_criterion": "Given CMakeLists.txt, When inspected, Then it still has enable_testing(), find_package(GTest CONFIG REQUIRED), add_executable(pdfcompress_tests ...) now includes tests/test_corpus_verifier.cpp (one-line addition discipline), target_link_libraries GTest::gtest GTest::gtest_main pdfcompress_core, and include(GoogleTest) gtest_discover_tests(pdfcompress_tests), with BUILD_TESTING=ON default.",
-          "type": "unit",
-          "description": "grep CMakeLists CTest wiring",
-          "expected_result": "grep -q 'enable_testing()' CMakeLists.txt; grep -q 'find_package(GTest' CMakeLists.txt; grep -q 'test_corpus_verifier.cpp' CMakeLists.txt; grep -q 'gtest_discover_tests' CMakeLists.txt; grep -q 'BUILD_TESTING.*ON' CMakeLists.txt"
-        },
-        {
-          "test_id": "T06-T02",
-          "linked_acceptance_criterion": "Given fresh checkout, When 'cmake -B build -DCMAKE_TOOLCHAIN_FILE=third_party/vcpkg/scripts/buildsystems/vcpkg.cmake && cmake --build build && ctest --test-dir build --output-on-failure -V' is run, Then at least 14+ tests pass (12 existing + verifier), no test fails, and generate_corpus still links.",
-          "type": "integration",
-          "description": "Full CTest gate",
-          "expected_result": "cmake -B build -DCMAKE_TOOLCHAIN_FILE=third_party/vcpkg/scripts/buildsystems/vcpkg.cmake && cmake --build build && ctest --test-dir build --output-on-failure | grep -q '100% tests passed'; test $(ctest --test-dir build -N | grep -c 'Test #') -ge 14"
-        },
-        {
-          "test_id": "T06-T03",
-          "linked_acceptance_criterion": "Given build/run_optimize --help and diagnose, When invoked, Then they list all flags (--profile, --quality, --strip-*, --linearize, --no-flate-recompress, --no-dedup, -o/--output) and exit 0, and optimized PDFs pass QPDF().processFile and diagnose shows fonts preserved (Helvetica).",
-          "type": "integration",
-          "description": "CLI flags still listable",
-          "expected_result": "./build/run_optimize --help | grep -q -- '--profile'; ./build/run_optimize --help | grep -q -- '--strip-metadata'; ./build/diagnose $CORPUS/text_only.pdf | grep -q 'Helvetica' || qpdf --json $CORPUS/text_only_optimized.pdf | grep -q Font"
-        },
-        {
-          "test_id": "T06-T04",
-          "linked_acceptance_criterion": "Given the git tree, When checked, Then `git status --short` shows no modified tracked files outside docs/ (pipeline bookkeeping in docs/ evolves as the pipeline runs; only personal untracked files .graphifyignore, current_context.txt, graphify-out.old/ are allowed); the committed change set since 34e6301 touches only .gitignore, CMakeLists.txt, benchmark/, docs/, src/core/PDFOptimizer.h/.cpp, src/main.cpp, tests/, tools/render_diff.cpp, tools/run_optimize.cpp, vcpkg.json; src/core/PDFOptimizer.cpp contains the ESC-001 dedup guard (grep isIndirect) with no codec/DecisionEngine/stripping-logic changes; src/codecs/* is untouched; and vcpkg.json lists gtest not catch2.",
-          "type": "unit",
-          "description": "git diff --stat guard",
-          "expected_result": "git status --short | grep '^ M' | grep -v '^ M docs/' is empty (only docs/ bookkeeping may be modified); git status --short | grep '^??' | grep -vE '^\\?\\? (\\.graphifyignore|current_context\\.txt|graphify-out\\.old/)$' is empty; grep -q 'isIndirect' src/core/PDFOptimizer.cpp; git diff 34e6301 HEAD --stat -- src/codecs/ is empty; grep -q '\"gtest\"' vcpkg.json; ! grep -q 'catch2' vcpkg.json"
-        },
-        {
-          "test_id": "T06-T05",
-          "linked_acceptance_criterion": "Given benchmark_results TSV, When inspected, Then manual gate 'benchmark/run_benchmark.sh build' completes in <30s, TSV in cwd and build/ have header File Original Size Tool Output Size Reduction % Time (ms) SSIM PSNR Status, and ctest gate can be used as single trusted baseline per J1/J2.",
-          "type": "e2e",
-          "description": "End-to-end J1 journey",
-          "expected_result": "timeout 30 bash benchmark/run_benchmark.sh build; ls benchmark_results_*.tsv; ls build/benchmark_results_*.tsv; head -1 benchmark_results_*.tsv | grep -q 'SSIM.*PSNR.*Status'; ctest --test-dir build --output-on-failure | tail -5"
-        }
-      ],
-      "expected_artifacts": [
-        "CMakeLists.txt"
+        "CMakeLists.txt (3 added lines)"
       ],
       "touches_files": [
         "CMakeLists.txt"
       ],
       "inputs": [
-        "CMakeLists.txt from T04",
-        "tests/test_corpus_verifier.cpp",
-        "build/run_optimize",
-        "build/diagnose"
+        "tests/test_profile_defaults.cpp",
+        "tests/test_stripping_profiles.cpp",
+        "tests/test_structure_writer.cpp"
       ],
       "outputs": [
-        "CTEST gate passing, 14+ tests",
-        "build/generate_corpus, build/render_diff, build/pdfcompress_tests"
+        "pdfcompress_tests binary including Phase-1 tests",
+        "green ctest run"
       ],
-      "architecture_dependency": false,
-      "status": "done"
+      "status": "done",
+      "size": "S",
+      "context": {
+        "read_files": [
+          {
+            "path": "CMakeLists.txt",
+            "lines": "144-174",
+            "why": "file being modified: add three test files to pdfcompress_tests"
+          },
+          {
+            "path": "tests/test_pdf_optimizer.cpp",
+            "lines": "1-20",
+            "why": "include/link pattern the new files follow"
+          }
+        ],
+        "contracts": [
+          "add_executable(pdfcompress_tests ...) + gtest_discover_tests(pdfcompress_tests) + BUILD_TESTING=ON  [existing, extend file list only]"
+        ],
+        "architecture_excerpt": "| 21 | Test framework | **GTest + CTest** [existing \u2014 locked] | Locked per Phase 0; new routing/DPI/JBIG2/font/password tests are `TEST(Suite,Case)` | \u2014 |",
+        "plan_excerpt": "- **STOP boundary:** STOP after verifier tests green + USAGE.md defaults table + both TSVs archived \u2014 no Phase 2 work until AC-B1/B2/B3 pass and any default dispute is filed as a requirements change.",
+        "requirement_ids": [
+          "S1",
+          "AC-B1",
+          "AC-B2",
+          "AC-B3"
+        ],
+        "test_command": "ctest --test-dir build --output-on-failure",
+        "memory_notes": [],
+        "needs_graphify": false,
+        "size": "S"
+      }
     },
     {
-      "id": "T07-optimizer-dedup-fix",
-      "title": "Optimizer Dedup Crash Fix — skip indirect replaceObject pairs (ESC-001)",
-      "description": "Apply the minimal ESC-001 crash fix in src/core/PDFOptimizer.cpp stream-dedup loop (~lines 359-370): skip pairs whose stored replacement handle is indirect (QPDF::replaceObject requires a direct object) and wrap replaceObject in try/catch so one bad pair never fails the whole file; keep the objGen != guard. No codec, DecisionEngine, or stripping-logic changes. NOTE: this fix may already be present in the working tree from manual intervention — verify every test below and reconcile any drift rather than reverting a working fix.",
+      "id": "P1-T5",
+      "title": "USAGE.md Phase-1 docs + benchmark gate (AC-B4, S6, S8)",
+      "description": "Update USAGE.md with the forProfile defaults table, --linearize/--no-flate-recompress/--no-dedup and strip-flag docs, and replace the stale 20-80% savings claim and other outdated sections with Phase-1 measured benchmark numbers; then run the benchmark gate and archive both TSVs. Owns the only USAGE.md edit in Phase 1.",
       "agent": "build_worker",
-      "task_type": "bug_fix",
+      "task_type": "doc",
       "dependencies": [
-        "T01-corpus-hardening"
+        "P1-T4"
       ],
       "acceptance_criteria": [
-        "Given src/core/PDFOptimizer.cpp dedup loop, When inspected, Then before pdf.replaceObject there is an isIndirect() guard that skips pairs whose stored replacement handle is indirect, the replaceObject call is wrapped in try/catch that logs and continues, and the objGen != guard is retained.",
-        "Given transparency.pdf from the T01 corpus in $TMPDIR/pdfcompress_test_corpus, When PDFOptimizer::optimize is run with the Balanced profile, Then result.success is true (no 'replaceObject called with indirect object handle' error) and the output passes QPDF().processFile without warnings.",
-        "Given git diff of src/core/PDFOptimizer.cpp, When inspected, Then the diff is limited to the stream-dedup block (isIndirect guard + try/catch) with no changes to image decode/encode branches, DecisionEngine wiring, stripping logic, or src/codecs/*."
+        "Given OptimizationOptions::forProfile as locked by P1-T1 tests, when USAGE.md Compression Profiles section is read, then it contains a defaults table matching the code (MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, linearize=false) plus --linearize/--no-flate-recompress/--no-dedup and --strip-*/--no-strip-* flag docs.",
+        "Given the pre-Phase-1 USAGE.md stale claims, when USAGE.md is read after the edit, then the 20-80% savings sentence is replaced with measured Phase-1 benchmark numbers and the outdated statements (slider affects all classes, linearization always on, empty Tests section) are corrected with no other behavior claims added.",
+        "Given the Phase-1 change set (no compression-logic change), when benchmark/run_benchmark.sh is run on the 14-file corpus and compared run-to-run (or against an archived pre-Phase-1 TSV when present), then pdfcompress rows agree within \u00b12% on every file and both TSV paths are reported as archived."
       ],
       "tests": [
         {
-          "test_id": "T07-T01",
-          "linked_acceptance_criterion": "Given src/core/PDFOptimizer.cpp dedup loop, When inspected, Then before pdf.replaceObject there is an isIndirect() guard that skips pairs whose stored replacement handle is indirect, the replaceObject call is wrapped in try/catch that logs and continues, and the objGen != guard is retained.",
-          "type": "unit",
-          "description": "grep dedup guard",
-          "expected_result": "grep -q 'isIndirect()' src/core/PDFOptimizer.cpp; grep -q 'replaceObject' src/core/PDFOptimizer.cpp; grep -q 'objGen.*!=' src/core/PDFOptimizer.cpp || grep -q 'getObjGen() !=' src/core/PDFOptimizer.cpp; grep -A5 'isIndirect' src/core/PDFOptimizer.cpp | grep -q 'continue'"
+          "test_id": "P1-T5-T01",
+          "linked_acceptance_criterion": "Given OptimizationOptions::forProfile as locked by P1-T1 tests, when USAGE.md Compression Profiles section is read, then it contains a defaults table matching the code (MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, linearize=false) plus --linearize/--no-flate-recompress/--no-dedup and --strip-*/--no-strip-* flag docs.",
+          "type": "manual",
+          "description": "Read USAGE.md profiles/flags sections; cross-check every cell against forProfile in src/core/PDFOptimizer.h:27-64 and run_optimize --help output.",
+          "expected_result": "Table matches code exactly; all flags documented."
         },
         {
-          "test_id": "T07-T02",
-          "linked_acceptance_criterion": "Given transparency.pdf from the T01 corpus in $TMPDIR/pdfcompress_test_corpus, When PDFOptimizer::optimize is run with the Balanced profile, Then result.success is true (no 'replaceObject called with indirect object handle' error) and the output passes QPDF().processFile without warnings.",
-          "type": "integration",
-          "description": "Reproduce ESC-001 end to end",
-          "expected_result": "cmake --build build --target run_optimize && (cd build && ./run_optimize \"$CORPUS/transparency.pdf\") reports Optimization Successful; qpdf --check on transparency_optimized.pdf exits 0; no 'indirect object handle' in output"
+          "test_id": "P1-T5-T02",
+          "linked_acceptance_criterion": "Given the pre-Phase-1 USAGE.md stale claims, when USAGE.md is read after the edit, then the 20-80% savings sentence is replaced with measured Phase-1 benchmark numbers and the outdated statements (slider affects all classes, linearization always on, empty Tests section) are corrected with no other behavior claims added.",
+          "type": "manual",
+          "description": "Grep USAGE.md for 20-80, linearization-always, empty-tests and slider-all-classes claims; confirm each is replaced/corrected and numbers cite the archived TSV.",
+          "expected_result": "No stale claim remains; numbers trace to TSV."
         },
         {
-          "test_id": "T07-T03",
-          "linked_acceptance_criterion": "Given git diff of src/core/PDFOptimizer.cpp, When inspected, Then the diff is limited to the stream-dedup block (isIndirect guard + try/catch) with no changes to image decode/encode branches, DecisionEngine wiring, stripping logic, or src/codecs/*.",
-          "type": "unit",
-          "description": "Diff scope guard",
-          "expected_result": "git diff --stat src/codecs/ is empty; git diff src/core/PDFOptimizer.cpp | grep -q 'isIndirect'; git diff src/core/PDFOptimizer.cpp | grep -qvE 'tjDecompress|DecisionEngine|stripForms|stripBookmarks' or manual review confirms dedup-block-only"
+          "test_id": "P1-T5-T03",
+          "linked_acceptance_criterion": "Given the Phase-1 change set (no compression-logic change), when benchmark/run_benchmark.sh is run on the 14-file corpus and compared run-to-run (or against an archived pre-Phase-1 TSV when present), then pdfcompress rows agree within \u00b12% on every file and both TSV paths are reported as archived.",
+          "type": "manual",
+          "description": "Run bash benchmark/run_benchmark.sh build, archive the TSV path(s); compare pdfcompress rows across the two runs (or vs pre-Phase-1 TSV); compute per-row size delta.",
+          "expected_result": "Every pdfcompress row within \u00b12%; both TSV paths reported."
         }
       ],
       "expected_artifacts": [
-        "src/core/PDFOptimizer.cpp"
+        "USAGE.md (profiles table + flags + measured numbers)",
+        "benchmark_results_*.tsv (two runs archived)"
       ],
       "touches_files": [
-        "src/core/PDFOptimizer.cpp"
+        "USAGE.md"
       ],
       "inputs": [
-        "src/core/PDFOptimizer.cpp dedup loop",
-        "tests/test_corpus_generator transparency fixture (T01)",
-        "docs/code_review/escalations.md ESC-001 diagnosis"
+        "src/core/PDFOptimizer.h forProfile",
+        "tools/run_optimize.cpp --help",
+        "benchmark TSV output"
       ],
       "outputs": [
-        "src/core/PDFOptimizer.cpp with dedup crash guard"
+        "Updated USAGE.md",
+        "two archived benchmark TSVs with \u00b12% gate result"
       ],
-      "architecture_dependency": false,
-      "status": "done"
-    },
-    {
-      "id": "T08-test-expectations-fix",
-      "title": "Fix Wrong Test Expectations in test_pdf_optimizer.cpp (3 pre-existing failures)",
-      "description": "Correct three incorrect assertions in tests/test_pdf_optimizer.cpp so the suite matches verified product behavior: BookmarksStripped must pass explicit stripBookmarks (default Balanced strips JS+metadata only), AnnotationsStripped must pass explicit strip options, CmykSkipped must assert imagesSkipped==1 (imagesProcessed counts the visited image before the CMYK skip). No product-code changes.",
-      "agent": "build_worker",
-      "task_type": "test",
-      "dependencies": [
-        "T01-corpus-hardening"
-      ],
-      "acceptance_criteria": [
-        "Given tests/test_pdf_optimizer.cpp BookmarksStripped, When run, Then it constructs OptimizationOptions with stripBookmarks=true (rather than relying on defaults) and asserts the output has no /Outlines key with result.success true.",
-        "Given tests/test_pdf_optimizer.cpp AnnotationsStripped, When run, Then it constructs OptimizationOptions with the relevant strip flags (stripLinks/stripOtherAnnotations) and asserts the expected removal counter is greater than 0 with result.success true.",
-        "Given tests/test_pdf_optimizer.cpp CmykSkipped, When run on cmyk_image.pdf, Then it asserts result.imagesSkipped==1 and result.success true (instead of imagesProcessed==0), exercising the CMYK skip path."
-      ],
-      "tests": [
-        {
-          "test_id": "T08-T01",
-          "linked_acceptance_criterion": "Given tests/test_pdf_optimizer.cpp BookmarksStripped, When run, Then it constructs OptimizationOptions with stripBookmarks=true (rather than relying on defaults) and asserts the output has no /Outlines key with result.success true.",
-          "type": "integration",
-          "description": "Bookmarks test with explicit option",
-          "expected_result": "grep -q 'stripBookmarks.*true\\|stripBookmarks = true' tests/test_pdf_optimizer.cpp; ctest -R 'PDFOptimizerTest.BookmarksStripped' --output-on-failure passes"
-        },
-        {
-          "test_id": "T08-T02",
-          "linked_acceptance_criterion": "Given tests/test_pdf_optimizer.cpp AnnotationsStripped, When run, Then it constructs OptimizationOptions with the relevant strip flags (stripLinks/stripOtherAnnotations) and asserts the expected removal counter is greater than 0 with result.success true.",
-          "type": "integration",
-          "description": "Annotations test with explicit options",
-          "expected_result": "grep -q 'stripLinks\\|stripOtherAnnotations' tests/test_pdf_optimizer.cpp; ctest -R 'PDFOptimizerTest.AnnotationsStripped' --output-on-failure passes"
-        },
-        {
-          "test_id": "T08-T03",
-          "linked_acceptance_criterion": "Given tests/test_pdf_optimizer.cpp CmykSkipped, When run on cmyk_image.pdf, Then it asserts result.imagesSkipped==1 and result.success true (instead of imagesProcessed==0), exercising the CMYK skip path.",
-          "type": "integration",
-          "description": "CMYK skip assertion corrected",
-          "expected_result": "grep -q 'imagesSkipped.*1' tests/test_pdf_optimizer.cpp; ! grep -q 'EXPECT_EQ(result.imagesProcessed, 0)' tests/test_pdf_optimizer.cpp; ctest -R 'PDFOptimizerTest.CmykSkipped' --output-on-failure passes"
-        }
-      ],
-      "expected_artifacts": [
-        "tests/test_pdf_optimizer.cpp"
-      ],
-      "touches_files": [
-        "tests/test_pdf_optimizer.cpp"
-      ],
-      "inputs": [
-        "tests/test_pdf_optimizer.cpp current assertions",
-        "src/core/PDFOptimizer.h OptimizationOptions defaults (Balanced strips JS+metadata only)",
-        "src/core/PDFOptimizer.cpp CMYK skip (imagesSkipped++)"
-      ],
-      "outputs": [
-        "tests/test_pdf_optimizer.cpp with corrected expectations"
-      ],
-      "architecture_dependency": false,
-      "status": "done"
+      "status": "done",
+      "size": "M",
+      "context": {
+        "read_files": [
+          {
+            "path": "USAGE.md",
+            "lines": "122-214",
+            "why": "sections being corrected: Optimize pipeline, CLI, profiles table, output claims"
+          },
+          {
+            "path": "src/core/PDFOptimizer.h",
+            "lines": "27-64",
+            "why": "normative forProfile defaults the table must match"
+          },
+          {
+            "path": "tools/run_optimize.cpp",
+            "lines": "7-26",
+            "why": "help text listing every flag to document"
+          }
+        ],
+        "contracts": [
+          "MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, linearize=false  [normative, locked 2026-10-04]"
+        ],
+        "architecture_excerpt": "| 18 | Language | **C++20, RAII, `-Wall -Wextra` clean** [existing \u2014 hard constraint] | Locked stack; all new code follows existing hygiene | \u2014 |",
+        "plan_excerpt": "- **STOP boundary:** STOP after verifier tests green + USAGE.md defaults table + both TSVs archived \u2014 no Phase 2 work until AC-B1/B2/B3 pass and any default dispute is filed as a requirements change.",
+        "requirement_ids": [
+          "AC-B4",
+          "S6",
+          "S8",
+          "S7"
+        ],
+        "test_command": "bash benchmark/run_benchmark.sh build",
+        "memory_notes": [],
+        "needs_graphify": false,
+        "size": "M"
+      }
     }
-  ],
-  "status": "READY_FOR_BUILD"
+  ]
 }

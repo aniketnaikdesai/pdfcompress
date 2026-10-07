@@ -1,111 +1,45 @@
 {
-  "metadata": {
-    "version": "1.0.0",
-    "generated_at": "2026-10-03T23:39:13.646319Z",
-    "max_parallel_tasks": 4,
-    "description": "Phase 0 execution graph — corpus -> benchmark & render src parallel -> render build -> verifier -> ctest gate"
-  },
   "nodes": [
     {
-      "id": "T01-corpus-hardening",
-      "type": "Task",
-      "title": "Corpus Hardening — replace 6 stubs, add missing types, fix CMYK, 14 deterministic QPDF PDFs"
+      "id": "P1-T1",
+      "type": "Task"
     },
     {
-      "id": "T02-benchmark-hardening",
-      "type": "Task",
-      "title": "Benchmark Hardening — valid QPDF, 5-tool matrix, guarded SKIPPED, ms timing, TSV idempotency"
+      "id": "P1-T2",
+      "type": "Task"
     },
     {
-      "id": "T03-render-diff-source",
-      "type": "Task",
-      "title": "Pure-C++ Render-Diff Helper Source — PDFium 150 DPI BGRA SSIM/PSNR"
+      "id": "P1-T3",
+      "type": "Task"
     },
     {
-      "id": "T04-render-diff-build",
-      "type": "Task",
-      "title": "Render-Diff CMake Wiring + Benchmark TSV Integration (N/A fallback)"
+      "id": "P1-T4",
+      "type": "Task"
     },
     {
-      "id": "T05-test-verifier",
-      "type": "Task",
-      "title": "Corpus Verifier Tests — file count, per-type keys, stripping regression"
-    },
-    {
-      "id": "T06-ctest-wiring-gate",
-      "type": "Task",
-      "title": "CTest Wiring & Acceptance Gate — gtest_discover, build, ctest --output-on-failure"
-    },
-    {
-      "id": "T07-optimizer-dedup-fix",
-      "type": "Task",
-      "title": "Optimizer Dedup Crash Fix — skip indirect replaceObject pairs (ESC-001)"
-    },
-    {
-      "id": "T08-test-expectations-fix",
-      "type": "Task",
-      "title": "Fix Wrong Test Expectations in test_pdf_optimizer.cpp (3 pre-existing failures)"
+      "id": "P1-T5",
+      "type": "Task"
     }
   ],
   "edges": [
     {
-      "from": "T01-corpus-hardening",
-      "to": "T02-benchmark-hardening",
+      "from": "P1-T1",
+      "to": "P1-T4",
       "type": "DEPENDS_ON"
     },
     {
-      "from": "T01-corpus-hardening",
-      "to": "T03-render-diff-source",
+      "from": "P1-T2",
+      "to": "P1-T4",
       "type": "DEPENDS_ON"
     },
     {
-      "from": "T02-benchmark-hardening",
-      "to": "T04-render-diff-build",
+      "from": "P1-T3",
+      "to": "P1-T4",
       "type": "DEPENDS_ON"
     },
     {
-      "from": "T03-render-diff-source",
-      "to": "T04-render-diff-build",
-      "type": "DEPENDS_ON"
-    },
-    {
-      "from": "T01-corpus-hardening",
-      "to": "T05-test-verifier",
-      "type": "DEPENDS_ON"
-    },
-    {
-      "from": "T05-test-verifier",
-      "to": "T06-ctest-wiring-gate",
-      "type": "DEPENDS_ON"
-    },
-    {
-      "from": "T04-render-diff-build",
-      "to": "T06-ctest-wiring-gate",
-      "type": "DEPENDS_ON"
-    },
-    {
-      "from": "T01-corpus-hardening",
-      "to": "T07-optimizer-dedup-fix",
-      "type": "DEPENDS_ON"
-    },
-    {
-      "from": "T01-corpus-hardening",
-      "to": "T08-test-expectations-fix",
-      "type": "DEPENDS_ON"
-    },
-    {
-      "from": "T07-optimizer-dedup-fix",
-      "to": "T05-test-verifier",
-      "type": "DEPENDS_ON"
-    },
-    {
-      "from": "T07-optimizer-dedup-fix",
-      "to": "T06-ctest-wiring-gate",
-      "type": "DEPENDS_ON"
-    },
-    {
-      "from": "T08-test-expectations-fix",
-      "to": "T06-ctest-wiring-gate",
+      "from": "P1-T4",
+      "to": "P1-T5",
       "type": "DEPENDS_ON"
     }
   ]

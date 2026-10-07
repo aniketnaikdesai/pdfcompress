@@ -533,3 +533,338 @@ record the same). No graph to query — manual inspection used
   stays closed.
 
 Status: REVIEW_COMPLETE
+
+## Phase 1 Wave 8 review — P1-T1 done, P1-T2/P1-T3 blocked (2026-10-07)
+
+Scope: `docs/build/build_log.md` (Wave 8 P1-T1 done / P1-T2 BLOCKED / P1-T3
+BLOCKED, terminal `Status: NEEDS_CODE_REVIEW`), `docs/build/failures.json`
+(P1-T2, P1-T3), `docs/build/results/_archive/wave8_P1-T*.json` (note: results
+live under `_archive/`, not `docs/build/results/<id>.json`), `docs/tasks/
+task-graph.json` (Phase 1 graph, P1-T1..P1-T5), `docs/requirements/
+requirements.md` Part II (AC-B1/B2/B3, S1–S9, verify-only lock),
+`docs/architecture.md` + `docs/plan.md` Phase 1 sections, `src/core/
+PDFOptimizer.cpp:119-125` + `:334-386` (read-only diagnosis), `src/core/
+PDFOptimizer.h:27-64` (forProfile), new test files (untracked), `git
+status/diff`, reviewer re-ran `ctest -R 'StrippingProfiles|StructureWriter|
+ProfileDefaults'`.
+
+Incremental scope: everything since the last `Status: REVIEW_COMPLETE`
+(Phase 0 final close-out). Only P1-T1/P1-T2/P1-T3 are under review; P1-T4
+(not_started) and P1-T5 (not_started) are not reviewed. No prior
+`docs/code_review/escalations.json` existed (legacy `escalations.md`
+ESC-001..006 are all `addressed`; spot-checked ESC-001 guard still present
+at `PDFOptimizer.cpp:373`, nothing regresses them — no re-diagnosis).
+
+Graphify note: no `graphify-out/graph.json` query needed — the failures are
+fully explained by the results JSON, the cited source lines, and live test
+reproduction. Per instructions, `GRAPH_REPORT.md` was not read.
+
+### P-001 — P1-T1 (done) quality review — clean, no findings
+
+- Linked task: P1-T1 (`done`); tests P1-T1-T01..T03 all pass per results JSON
+  (standalone gtest build; CMake wiring belongs to P1-T4).
+- Verified by reading `tests/test_profile_defaults.cpp` (46 lines) against
+  `PDFOptimizer.h:27-64`: MaxQuality all-7-false, Balanced JS+metadata-only,
+  MaxCompression all-7-true, `linearize=false`, `recompressFlate=true`,
+  `deduplicateStreams=true` — exact match, no product-code change (`git
+  status` shows no `src/` modification; new test file is untracked, within
+  `touches_files`). GTest-only, C++ hygiene held.
+- Observation (not a finding): `ctest -R ProfileDefaults` finds no tests —
+  expected, since `CMakeLists.txt` does not yet list the file (P1-T4 owns
+  that edit; see P-004). No architecture/requirements deviation (AC-B1).
+
+### P-002 — Failure diagnosis: P1-T2 (blocked, P1-T2-T02)
+
+- id: P-002; linked task: P1-T2 (`blocked`); failing test P1-T2-T02
+  (`StrippingProfiles.BalancedRemovesOnlyJsAndMetadata`).
+- Category: `gap`; root-cause classification: `bad_task_breakdown`
+  (test expectation stricter than its own task AC and incompatible with
+  locked defaults — NOT a worker error in execution); severity: `blocking`
+  (blocks P1-T4 via DEPENDS_ON).
+- Evidence (reproduced, not from message alone): reviewer-ran `ctest
+  --test-dir build -R StrippingProfiles` → same failure (`metadataStripped`
+  true on with_javascript/with_form/with_bookmarks_and_links, `test_
+  stripping_profiles.cpp:155,185,187,191`). Mechanism confirmed by reading
+  `PDFOptimizer.cpp:119-125`: `result.metadataStripped = true` is set
+  unconditionally whenever `options.stripMetadata` is true (Balanced sets it
+  true), without checking whether `/Info`, `/Metadata`, `/PieceInfo`,
+  `/LastModified`, or `/Thumb` was present/removed. `removeKey` on an absent
+  key is a no-op, but the flag is still set — the bool reports intent while
+  every sibling counter reports actual removals.
+- Why TASK_MANAGER (not BUILD): the product code implements the locked
+  `forProfile` behavior (Balanced `stripMetadata=true`, pinned by P1-T1);
+  changing the flag to conditional would be a strip-semantics/reporting
+  change barred by the Phase 1 verify-only lock. The task's own AC #2
+  requires `metadataStripped=true` only on with_metadata.pdf, with the
+  "nothing else" parenthetical scoped to the six removal counts — the test's
+  `EXPECT_FALSE(r.metadataStripped)` on metadata-free PDFs over-asserts
+  relative to its task AC. What must change is the task artifact (narrow the
+  expectation), owned by Task Manager. Architecture needs no change
+  (strip branches sound); the worker correctly refused both a product edit
+  and a test-weakening.
+- Routed: ESC-007 → TASK_MANAGER (blocking). Cross-reference: ESC-008.
+
+### P-003 — Requirements gap behind P1-T2: metadataStripped undefined
+
+- id: P-003; linked task: P1-T2; category: `gap`; root-cause
+  classification: `requirements_gap`; severity: `should-fix`.
+- Evidence: nothing defines whether `metadataStripped` means "actually
+  removed something" or "strip was requested". `requirements.md` AC-B2 says
+  Balanced removes "JS and metadata and nothing else" with no bool scoping;
+  P1-T2 AC scopes "nothing else" to counts; architecture lists the field
+  without semantics; `OptimizationResult` has no doc comment. The P1-T2
+  failure is this ambiguity made concrete.
+- Routed: ESC-008 → REQUIREMENTS (should-fix). If defined as
+  actually-removed, the follow-on product change belongs to a future
+  (non-verify-only) task — not P1-T2.
+
+### P-004 — Failure diagnosis: P1-T3 (blocked, P1-T3-T02)
+
+- id: P-004; linked task: P1-T3 (`blocked`); failing test P1-T3-T02
+  (`StructureWriter.DedupCountedWithDefaultsZeroWithout`).
+- Category: `gap`; root-cause classification: `bad_task_breakdown` (task as
+  scoped cannot satisfy its AC — needs product + corpus changes outside its
+  footprint); severity: `blocking` (blocks P1-T4 via DEPENDS_ON).
+- Evidence (reproduced): reviewer-ran `ctest --test-dir build
+  -R StructureWriter` → T01/T03 pass, T02 fails (`streamsDeduplicated==0`,
+  `test_structure_writer.cpp:50`). Both worker-diagnosed causes confirmed by
+  reading code: (1) `PDFOptimizer.cpp:338` stores only indirect streams in
+  `seenStreams`, so the ESC-001 guard at line 373 (`if
+  (it->second.isIndirect()) continue`) always fires — `replaceObject` /
+  `streamsDeduplicated++` is dead code (consistent with prior review note
+  W7-001, which flagged dedup-never-fires as an accepted safe limitation);
+  (2) `generateSharedXObject()` returns `generateTransparency()`
+  (`test_corpus_generator.cpp:450-451`), which shares a single indirect
+  image object by reference across pages (`:310-316`, same handle → same
+  objGen), so no distinct byte-identical stream pair exists — the `objGen !=`
+  guard (line 366) would skip even under a working direct-copy replace path.
+  The test file itself is correct as written (3 TESTs, GTest-only, qpdf-check
+  semantics); P1-T3-T01/T03 passing confirms the harness is sound.
+- Why TASK_MANAGER (not BUILD/PLAN/REQUIREMENTS directly): the worker
+  correctly refused out-of-footprint edits twice over (product dedup path +
+  corpus fixture). Re-dispatching P1-T3 cannot converge. The fix is a
+  breakdown change: re-scope the AC (validity/size comparison only, which
+  already pass) and/or add a product task (direct-copy dedup replace) plus a
+  distinct-duplicate-stream fixture. Flagged inside the entry: AC-B3 promises
+  `streamsDeduplicated>=1` on the shared-XObject PDF, which the
+  reference-shared fixture cannot satisfy under any replace-based dedup —
+  Task Manager should escalate to Requirements if AC-B3 itself needs
+  rewording, but no separate REQUIREMENTS escalation is filed to avoid
+  double-routing one breakdown.
+- Routed: ESC-009 → TASK_MANAGER (blocking).
+
+### P-005 — Footprint flag assessment (P1-T3 CMakeLists note) — not a problem
+
+- The P1-T3 worker flagged that `CMakeLists.txt` registers
+  `tests/test_structure_writer.cpp` (+ `tests/test_stripping_profiles.cpp`)
+  although outside its `touches_files`, and states the edit predates its
+  work. Verified: `git diff -- CMakeLists.txt` shows exactly those 2 added
+  lines, uncommitted; P1-T3's `files_changed` lists only its test file and
+  `git status` shows no `src/` modification — the worker's no-touch claim
+  holds. Owner is unambiguous: P1-T4 ("Owns the only CMakeLists.txt edit in
+  Phase 1") whose AC P1-T4-T01 expects exactly three added lines. The current
+  2-line state is a partial pre-staging (missing
+  `tests/test_profile_defaults.cpp`); P1-T4 reconciles it by adding the
+  third line, no revert needed. No escalation — recorded here so P1-T4's
+  diff gate is judged against the 3-line end state, not against this
+  intermediate.
+
+## Summary (this pass)
+
+- P1-T1: verified clean (exact forProfile pin, no product change).
+- P1-T2: test-vs-code judged — product code implements locked defaults;
+  test over-asserts vs its task AC → ESC-007 (blocking, TASK_MANAGER) +
+  ESC-008 (bool semantics, should-fix, REQUIREMENTS).
+- P1-T3: test-vs-code judged — dead dedup path + reference-shared fixture
+  make AC unreachable in-footprint → ESC-009 (blocking, TASK_MANAGER).
+- Footprint flag: pre-existing 2-line CMakeLists staging belongs to P1-T4's
+  expected end state (needs third line); not a problem, no escalation.
+- Verify-only lock held: no `src/` edits in the working tree.
+- No severity inflated; no open JSON entries to close out (all legacy
+  ESC-001..006 remain `addressed`).
+
+Status: REVIEW_COMPLETE
+
+Status: REVIEW_COMPLETE
+
+## Phase 1 final review — all 5 tasks done (2026-10-07)
+
+Scope: `docs/build/build_log.md` (Phase 1 Wave 8–12; P1-T1..P1-T5 all `done`;
+terminal `Status: READY_FOR_REVIEW`), `docs/build/failures.json` (`{}` — no
+blocked tasks), `docs/build/results/_archive/wave{8,10,11,12}_P1-T*.json`
+(results live under `_archive/`; no bare `docs/build/results/<id>.json`
+exists), `docs/tasks/task-graph.json` (Phase 1 graph), `task_manager_notes.md`
+(2026-10-07 ESC-007/ESC-009 revision), `docs/requirements/requirements.md`
+Part II (AC-B1..B4, ESC-008 normative note, glossary) + `open_questions.md`,
+new test files (`tests/test_profile_defaults.cpp`,
+`tests/test_stripping_profiles.cpp`, `tests/test_structure_writer.cpp`),
+`CMakeLists.txt` + `USAGE.md` diffs, `src/core/PDFOptimizer.{h,cpp}` (read-only
+diagnosis), archived TSVs, and reviewer-ran `ctest`.
+
+Incremental scope: everything since the last `Status: REVIEW_COMPLETE` (Phase 1
+Wave 8 review). Only P1-T1..P1-T5 reviewed. Prior legacy escalations ESC-001..006
+remain `addressed`, spot-consistent, not re-diagnosed.
+
+Graphify note: `graphify-out/graph.json` now exists (created 2026-10-03), but per
+the per-agent rule it was not needed — the diffs, results JSON, and direct source
+reads fully answer every question here (no cross-file impact beyond
+`PDFOptimizer.cpp` <-> corpus fixture, both read directly). `GRAPH_REPORT.md` was
+not read. Stated explicitly, not silently skipped.
+
+### F-0101 — ESC-007 verified resolved, closed (P1-T2 revision: genuine)
+- Re-verified, not on trust: `tests/test_stripping_profiles.cpp` T02 no longer
+  asserts `metadataStripped==false` on metadata-free PDFs; it asserts
+  `EXPECT_TRUE(metadataStripped)` on `with_metadata.pdf` (line 162) and six
+  removal counters `==0` elsewhere, matching the now-normative AC-B2 note
+  (`requirements.md:350`) and glossary (`:54`). Reviewer re-ran
+  `ctest -R StrippingProfiles` → 5/5 green. The old expectation simply
+  contradicted the locked `forProfile` defaults once ESC-008 ruled intent
+  semantics — narrowing is correct, not accommodation. → ESC-007 `addressed`.
+
+### F-0102 — ESC-008 verified applied, closed
+- Ruling is present twice in requirements (`:54` glossary, `:350` AC-B2 normative
+  note) plus `open_questions.md` ESC-008 row, and the P1-T2 test matches it.
+  → ESC-008 `addressed`.
+
+### F-0103 — ESC-009 NOT resolved: revision accommodates a real gap (kept open)
+- The P1-T3 task rescope (`t>1` -> pin `streamsDeduplicated==0`, both runs) does
+  converge and its tests pass (reviewer `ctest -R StructureWriter` 3/3). But it
+  only pins the verified *current* behavior around a genuine, still-open defect:
+  `requirements.md` AC-B3 (lines 356-357) still normatively promises
+  `streamsDeduplicated>=1` on the shared-XObject PDF with defaults. Reviewer
+  read `PDFOptimizer.cpp:334-386`: all `seenStreams` handles are indirect, so the
+  ESC-001 guard (line 373) always skips (dead `streamsDeduplicated++`), and the
+  fixture reference-shares one indirect object (`objGen !=` guard line 366 would
+  skip anyway). Phase 1's verify-only lock forbids the product + corpus changes
+  that would make AC-B3 true. So ESC-009 stays `open` per the "revised test
+  merely accommodates a real gap" rule; the remaining fix owner is Requirements,
+  filed as **ESC-010** (`routed_to: REQUIREMENTS`, blocking) to reconcile AC-B3.
+
+### F-0104 — Quality review of P1-T1..P1-T5 (all done) — clean, no findings
+- P1-T1: `tests/test_profile_defaults.cpp` pins MaxQuality all-false / Balanced
+  JS+metadata-only / MaxCompression all-true with `linearize=false`,
+  `recompressFlate=true`, `deduplicateStreams=true` — exact match to
+  `PDFOptimizer.h:27-64`. No product change.
+- P1-T2: 5 tests exercise the profile removal matrix, non-JS GoTo `/OpenAction`
+  survival + `/AA`-removal-when-JS-stripped (staged `$TMPDIR`-only fixture,
+  never committed), and explicit-flag-wins. GTest-only, RAII (`QPDF` by value),
+  no product edit.
+- P1-T3: `tests/test_structure_writer.cpp` asserts default size <= no-opt, dedup
+  counter `==0` (verified current behavior), and `qpdf --check` on all outputs.
+  Test file correct as written.
+- P1-T4: `CMakeLists.txt` diff is exactly the three added test-file lines in one
+  hunk, no other change — matches its AC. Reconciled P1-T3's pre-existing 2-line
+  staging (added the missing third line). Reviewer full `ctest`:
+  **100% tests passed, 0 failed out of 44** (1 allowed pre-existing skip
+  `CorpusGenerator.BenchmarkTsvSsimThresholds`).
+- P1-T5: `USAGE.md` diff verified accurate — (a) profiles table matches
+  `PDFOptimizer.h:27-64` exactly for all 3 profiles incl. `linearize off`,
+  `Flate on`, `Dedup on`; (b) flag table lists `--profile/--quality/--strip-*/
+  --no-strip-*/--linearize/--no-flate-recompress/--no-dedup`; the `--help` output
+  is a subset (omits `--no-strip-links/annots/bookmarks/forms/dests`) but those
+  flags ARE parsed (`tools/run_optimize.cpp:76-100`), so the docs are accurate
+  to behavior; (c) measured numbers match the archived TSV
+  (`build/benchmark_results_20261007_160128.tsv`): min `text_only.pdf -4.65%`,
+  max `line_art.pdf 47.55%`, median ~11% (13 non-encrypted pdfcompress rows,
+  median 11.05%), encrypted correctly discounted; (d) no stale claim remains —
+  `20-80%`, slider-all-classes, linearization-always-on, empty-tests all fixed.
+  Benchmark gate independently re-verified: pdfcompress rows in
+  `_160003.tsv` vs `_160128.tsv` are size-identical 14/14 (only the encrypted
+  row's `Time (ms)` differs 0 vs 1000) → 0.00% size delta holds.
+- Observations (honest non-findings, no escalation): USAGE calls the gitignored
+  `build/benchmark_results_20261007_160128.tsv` "archived" and names only that
+  one path though two dual-write TSVs exist — harmless wording, task AC's
+  "reported as archived" is satisfied by the TSVs + P1-T5 log naming both.
+
+### F-0105 — Verify-only lock / no semantics change — confirmed
+- `git status --short -- src/` is empty; `git diff --stat -- src/ src/codecs/` is
+  empty. No product-code or behavior change anywhere in Phase 1. All tracked
+  modifications are `CMakeLists.txt`, `USAGE.md`, and `docs/*`; the three new
+  test files are untracked. Matches the Phase 1 no-strip-semantics-change lock.
+
+## Summary (this pass)
+- No new code bug / security / consistency finding. Phase 1 test + wiring + docs
+  work is clean and the verify-only lock holds.
+- ESC-007, ESC-008: independently re-verified and flipped to `addressed`.
+- ESC-009: kept `open` — the rescope accommodates a real, unresolved gap
+  (requirements AC-B3 still promises `streamsDeduplicated>=1`).
+- New ESC-010 (`REQUIREMENTS`, blocking): reconcile AC-B3 with the verified
+  `==0` behavior.
+- `ctest` reconfirmed 44/44 green. No severity inflated.
+
+Status: REVIEW_COMPLETE
+
+## Phase 1 close-out re-verification — ESC-009/ESC-010 reconciled (2026-10-07)
+
+Scope: re-verify and close the two escalations left open by the previous pass
+(ESC-010 -> REQUIREMENTS, ESC-009 -> TASK_MANAGER), independently confirming the
+Phase 1 tree is unchanged and green. Read: `docs/code_review/escalations.json`
+(prior entries), `docs/requirements/requirements.md` (AC-B3 :352-391, glossary
+:865-871, Assumptions Log :884, close-out note :906-911),
+`docs/requirements/design_gaps.md` (row 14), `docs/requirements/open_questions.md`
+(ESC-010 / ESC-010-FU rows), `docs/tasks/task_manager_notes.md` (:84-103),
+`docs/tasks/task-graph.json` (P1-T3 :206-245), `tests/test_structure_writer.cpp`,
+`docs/build/build_log.md` (Phase 1 Waves 8-12, all 5 done), `docs/build/failures.json`
+(`{}`), `docs/build/results/_archive/wave10_P1-T3.json`.
+
+Graphify note: no graph query needed — this pass is a targeted re-verification of two
+specific documentation/artifact reconciliations plus a live test run; the diffs and
+cited lines fully answer every question. `GRAPH_REPORT.md` was not read.
+
+### C-001 — ESC-010 (REQUIREMENTS) verified resolved, closed
+- Re-verified by reviewer, not on trust: `requirements.md` AC-B3 now reads
+  "`streamsDeduplicated == 0` on the shared-XObject PDF with defaults **and** with
+  `--no-dedup`; `qpdf --check` clean both" (:357-358) — the `>=1` promise is gone from
+  the normative `Then`. The rationale is present (:359-373, both causes: ESC-001
+  `isIndirect` guard at `PDFOptimizer.cpp:373` always taken -> `streamsDeduplicated++`
+  dead code; `generateSharedXObject()` reference-shares one indirect object). The
+  aspirational `>=1` is explicitly DEFERRED, not dropped (:375-387: owning phase
+  Phase 6/Goal G, Phase 2 fallback, plus required product + corpus work), with a
+  test-revisit trigger (:388-391). Carried consistently in the glossary (:865-871),
+  Assumptions Log (:884), close-out note (:906-911), `design_gaps.md` row 14, and
+  `open_questions.md` ESC-010 (answered).
+- `ESC-010-FU` (`open_questions.md`): the deferred dedup fix's owning-phase question is
+  recorded as a NON-BLOCKING requirements follow-up (recommendation: Phase 6 primary /
+  Phase 2 fallback), awaiting user confirmation. Not a Phase-1 blocker — confirmed
+  recorded, not treated as blocking.
+- → ESC-010 flipped to `addressed` in place with a `verified:` line.
+
+### C-002 — ESC-009 (TASK_MANAGER) verified resolved at root, closed
+- Re-verified by reviewer, not on trust: `task-graph.json` P1-T3 (:206-245) is rescoped
+  — AC2 and P1-T3-T02 both now assert `streamsDeduplicated==0` in BOTH runs (defaults
+  and `deduplicateStreams=false`), 1:1 with `tests/test_structure_writer.cpp:53-54`
+  (`EXPECT_EQ(rDefault.streamsDeduplicated, 0)` / `EXPECT_EQ(rNoDedup.streamsDeduplicated, 0)`).
+  `touches_files` remains exactly `["tests/test_structure_writer.cpp"]`, which is now
+  sufficient because the narrowed AC no longer requires product (`PDFOptimizer.cpp`) or
+  corpus (`test_corpus_generator.cpp`) writes — the original footprint-vs-AC mismatch is
+  moot (narrowed, not widened). `task_manager_notes.md` :84-103 records the
+  post-reconciliation consistency check (PASS, no graph change) and the deferred `>=1`
+  follow-up. Root cause (AC-B3 promising unsatisfiable behavior) is resolved by C-001.
+- → ESC-009 flipped to `addressed` in place with a `verified:` line.
+
+### C-003 — Independent re-run: 44/44 green, no product/semantics change
+- Reviewer ran `ctest --test-dir build --output-on-failure`: **100% tests passed, 0
+  failed out of 44** (includes `StructureWriter.DedupCountedWithDefaultsZeroWithout`,
+  `StrippingProfiles.*`, `ProfileDefaults.*`). `docs/build/failures.json` is `{}`;
+  `build_log.md` Phase 1 Waves 8-12 all `done`, terminal `Status: READY_FOR_REVIEW`.
+- Verify-only lock holds: `git status --short -- src/` empty and
+  `git diff --stat -- src/ src/codecs/` empty — no product-code or semantics change in
+  Phase 1. `_archive/wave10_P1-T3.json` lists only `tests/test_structure_writer.cpp`,
+  no footprint flags.
+
+### C-004 — No new findings
+- No new bug / quality / consistency / security / gap finding this pass. The two open
+  escalations are resolved and closed; ESC-007/ESC-008 remain `addressed`. `ESC-010-FU`
+  is an honest, non-blocking requirements follow-up and is recorded, not escalated.
+- No severity inflated; no escalation filed.
+
+## Summary (this pass)
+- ESC-010: independently verified resolved (AC-B3 pins `==0` + rationale, `>=1`
+  deferred, glossary/assumptions/design_gaps/open_questions consistent) -> `addressed`.
+- ESC-009: independently verified resolved at root (P1-T3 rescoped to `==0`, footprint
+  sufficient, `task_manager_notes.md` records it) -> `addressed`.
+- `ctest` re-run 44/44 green; `git diff src/` empty (no product/semantics change).
+- `ESC-010-FU` confirmed recorded as a non-blocking follow-up (not a Phase-1 blocker).
+- No new findings. No open escalations remain.
+
+Status: REVIEW_COMPLETE

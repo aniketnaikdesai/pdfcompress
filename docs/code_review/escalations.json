@@ -1,0 +1,50 @@
+[
+  {
+    "category": "gap",
+    "expected": "Balanced optimize of with_javascript/with_form/with_bookmarks_and_links PDFs reports metadataStripped=false (nothing to strip), matching the task AC's \"and nothing else\" reading; or the task AC explicitly scopes \"nothing else\" to the six removal counts only.",
+    "id": "ESC-007",
+    "observed": "P1-T2-T02 BalancedRemovesOnlyJsAndMetadata fails: metadataStripped=true on with_javascript/with_form/with_bookmarks_and_links PDFs that carry no metadata, because PDFOptimizer.cpp:119-125 sets result.metadataStripped=true unconditionally whenever options.stripMetadata is true (Balanced sets it true). The task's own AC only requires metadataStripped=true on with_metadata.pdf with the \"nothing else\" parenthetical scoped to links/annots/bookmarks/forms/dests counts, so the test's EXPECT_FALSE on metadataStripped elsewhere is stricter than its task AC and contradicts the locked forProfile behavior (Balanced stripMetadata=true). Reproduced via ctest -R StrippingProfiles.",
+    "routed_to": "TASK_MANAGER",
+    "severity": "blocking",
+    "status": "addressed",
+    "suggested_direction": "Narrow the P1-T2-T02 expectation to what the task AC and locked defaults guarantee (metadataStripped=true on with_metadata; zero removal counts elsewhere), or split the bool-semantics dispute into a product task once REQUIREMENTS pins the flag definition (see ESC-008). Do not change strip semantics inside P1-T2 (verify-only lock).",
+    "task_id": "P1-T2",
+    "verified": "Re-verified 2026-10-07 (Phase 1 final). tests/test_stripping_profiles.cpp T02 (lines 149-157, 179-190) no longer asserts metadataStripped==false on metadata-free PDFs: it asserts EXPECT_TRUE(metadataStripped) only on with_metadata.pdf and six-removal-counter==0 elsewhere, exactly matching the now-normative requirements.md AC-B2 note (line 350) and glossary (line 54) that metadataStripped means 'option applied'. Reviewer re-ran ctest -R StrippingProfiles -> 5/5 green. The original expectation contradicted the locked forProfile defaults; narrowing it is a correct resolution, not an accommodation of a code defect. Owner's (Task Manager) revision verified in place."
+  },
+  {
+    "category": "gap",
+    "expected": "A normative definition of OptimizationResult.metadataStripped: true only when an actual metadata element was present and removed vs true whenever stripMetadata was requested. All counters (linksRemoved etc.) report actual removals; the bool currently reports intent.",
+    "id": "ESC-008",
+    "observed": "No file defines metadataStripped semantics. PDFOptimizer.cpp:119-125 sets it unconditionally on stripMetadata=true; requirements AC-B2 says Balanced removes \"JS and metadata and nothing else\" without saying whether the bool must be false on metadata-free PDFs; P1-T2 AC scopes \"nothing else\" to counts only. The P1-T2 failure is this ambiguity made concrete.",
+    "routed_to": "REQUIREMENTS",
+    "severity": "should-fix",
+    "status": "addressed",
+    "suggested_direction": "Pin one sentence in AC-B2 (or the OptimizationResult contract): metadataStripped means actually-removed vs requested. If actually-removed, the follow-on product change belongs to a future task outside verify-only Phase 1.",
+    "task_id": "P1-T2",
+    "verified": "Re-verified 2026-10-07 (Phase 1 final). Ruling applied: requirements.md:54 (glossary) and the AC-B2 normative note at requirements.md:350 both define OptimizationResult.metadataStripped as intent ('the strip-metadata option was applied'), and open_questions.md records the ESC-008 row answered 2026-10-07. The P1-T2 test was narrowed to match (see ESC-007). Option (b) 'actually removed' is explicitly deferred out of Phase 1 (needs a product change + user approval)."
+  },
+  {
+    "category": "gap",
+    "expected": "A task whose footprint includes the files its AC requires changing: either a dedup AC achievable against the reference-shared corpus, or a corpus fixture with distinct byte-identical streams plus a product dedup path that can count them.",
+    "id": "ESC-009",
+    "observed": "P1-T3-T02 DedupCountedWithDefaultsZeroWithout fails (streamsDeduplicated==0 with defaults). Two independent causes, both outside P1-T3 touches_files [tests/test_structure_writer.cpp] and both confirmed: (1) PDFOptimizer.cpp:373 ESC-001 guard `if (it->second.isIndirect()) continue` always skips because seenStreams handles from getAllObjects() are always indirect, so streamsDeduplicated++ is dead code; (2) generateSharedXObject() returns generateTransparency(), which shares one indirect image object by reference across pages (same objGen), so there are no distinct duplicate streams to dedup even with a working replace path (objGen!= guard skips). Reproduced via ctest -R StructureWriter. Product-code and corpus changes are both barred by the task's verification-only scope, so re-running P1-T3 cannot converge.",
+    "routed_to": "TASK_MANAGER",
+    "severity": "blocking",
+    "status": "addressed",
+    "suggested_direction": "Re-scope P1-T3 (e.g. assert ==0 with --no-dedup and validity only, or stage a $TMPDIR fixture with distinct duplicate streams) and/or add a product task owning PDFOptimizer.cpp dedup (direct-copy replace) plus corpus. Note AC-B3 promises streamsDeduplicated>=1 on the shared-XObject PDF, which the reference-shared fixture cannot satisfy under any replace-based dedup; Task Manager should escalate to Requirements if AC-B3 itself needs rewording.",
+    "task_id": "P1-T3",
+    "verified": "Re-verified 2026-10-07 (Phase 1 close-out re-verification). Root resolved at source, not on say-so: requirements.md AC-B3 (lines 352-391) was reworded to pin streamsDeduplicated==0 under defaults AND --no-dedup on the shared-XObject PDF (no longer promises >=1), and P1-T3 was rescoped to match (task-graph.json P1-T3 AC2 + P1-T3-T02 now assert ==0 in both runs, 1:1 with tests/test_structure_writer.cpp:53-54 EXPECT_EQ(...,0) x2). The narrowed AC no longer demands product (PDFOptimizer.cpp) or corpus (test_corpus_generator.cpp) changes, so the test-only footprint [tests/test_structure_writer.cpp] is now sufficient — the original footprint-vs-AC mismatch is moot. task_manager_notes.md 2026-10-07 'Post-reconciliation rework' section records the PASS consistency check and defers the >=1 fix to a later phase. Reviewer independently re-ran ctest --test-dir build --output-on-failure: 100% passed, 0 failed out of 44, including StructureWriter.DedupCountedWithDefaultsZeroWithout; git diff --stat -- src/ src/codecs/ is empty (no product/semantics change)."
+  },
+  {
+    "id": "ESC-010",
+    "task_id": "P1-T3",
+    "routed_to": "REQUIREMENTS",
+    "category": "gap",
+    "severity": "blocking",
+    "observed": "requirements.md AC-B3 (lines 356-357) normatively requires 'streamsDeduplicated>=1 on the shared-XObject PDF with defaults'. Reviewer re-ran ctest -R StructureWriter: P1-T3-T02 now pins streamsDeduplicated==0 in BOTH runs. Reading src/core/PDFOptimizer.cpp:334-386 confirms why: every seenStreams handle comes from pdf.getAllObjects() and is indirect, so the ESC-001 guard at line 373 always skips and replaceObject/streamsDeduplicated++ is dead code; additionally the shared-XObject fixture (generateSharedXObject -> generateTransparency) shares one indirect object by reference, so the objGen != guard at line 366 would skip anyway. The Phase 1 verify-only lock forbids the product (dedup replace path) and corpus (distinct duplicate streams) changes that would make >=1 true, so AC-B3 as written is unsatisfiable in Phase 1. Task Manager flagged this in task_manager_notes.md (2026-10-07, ESC-009 entry) but did not escalate.",
+    "expected": "AC-B3 reconciled with verified Phase 1 behavior: either reword it to pin streamsDeduplicated==0 for Phase 1 and record streamsDeduplicated>=1 as a deferred follow-up, or assign the dedup fix + distinct-duplicate-streams fixture to a named later phase.",
+    "suggested_direction": "Reword AC-B3 for Phase 1 to pin ==0 (matching the verified inert-dedup behavior) and state that the aspirational >=1 assertion is deferred to the phase that owns the dedup fix (direct-copy replace) plus a distinct-duplicate-streams corpus fixture. Do not leave AC-B3 promising behavior the product does not implement.",
+    "status": "addressed",
+    "verified": "Re-verified 2026-10-07 (Phase 1 close-out re-verification). requirements.md AC-B3 (lines 352-391) now pins streamsDeduplicated==0 for Phase 1 with the full inert-dedup rationale (lines 357-373: ESC-001 isIndirect guard at PDFOptimizer.cpp:373 always taken -> streamsDeduplicated++ dead code; generateSharedXObject()->generateTransparency() reference-shares one indirect object), and explicitly records the aspirational streamsDeduplicated>=1 as a DEFERRED follow-up owned by Phase 6 (Goal G) with Phase 2 fallback plus a test-revisit trigger (lines 375-391). The ruling is carried consistently in the glossary (requirements.md:865-871), the Assumptions Log row (:884), the close-out note (:906-911), design_gaps.md row 14, and open_questions.md rows ESC-010 (answered) / ESC-010-FU (open). Reviewer independently re-ran ctest: 44/44 green; git diff src/ empty (no product/semantics change). ESC-010-FU (owning-phase confirmation for the deferred dedup fix) is a NON-BLOCKING requirements follow-up, correctly recorded and awaiting user confirmation — it does not block Phase 1."
+  }
+]

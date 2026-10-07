@@ -51,6 +51,7 @@ Current Tech Stack
 - **StreamFilter:** PDF stream filter name (DCTDecode, JPXDecode, FlateDecode, etc.).
 - **Linearization:** Fast Web View (QPDFWriter::setLinearization).
 - **Corpus:** Set of 14 licensed-free PDFs generated on the fly via QPDF (no embedded third-party copyrighted content), stored ephemerally in `$TMPDIR/pdfcompress_test_corpus` (not committed).
+- **metadataStripped (`OptimizationResult`):** reports *intent*, not actual removal — `true` iff `options.stripMetadata` was applied (i.e. `OptimizationOptions.stripMetadata==true`). This pins current code behavior (`PDFOptimizer.cpp` sets `result.metadataStripped=true` unconditionally whenever `stripMetadata` is true) with no behavior change per the Phase 1 no-strip-semantics-change lock. All six removal counters (`linksRemoved`, `annotationsRemoved`, `bookmarksRemoved`, `formsRemoved`, `jsRemoved`, `namedDestinationsRemoved`) report actual removals; this bool is the sole exception. Ruled 2026-10-07 per ESC-008; see Phase 1 AC-B2 normative note.
 - **Render-diff:** Pixel-level comparison of original vs optimized renders (SSIM/PSNR) implemented purely in C++ via PDFium rendering at fixed DPI; no Python dependency. If PDFium render is unavailable, record N/A.
 
 ## User Journeys
@@ -346,13 +347,51 @@ verifier tests, and completes small gaps (e.g. `/AA` + `/OpenAction` non-JS hand
   on `with_javascript.pdf`) and metadata (`metadataStripped=true` on
   `with_metadata.pdf`) and nothing else; MaxCompression removes ≥1 item on each of
   the four; non-JS `/OpenAction` GoTo survives all profiles.
+- **Normative — ESC-008 ruling (locked 2026-10-07, no behavior change):** `metadataStripped` means "the strip-metadata option was applied" (option (a)), NOT "metadata entries were actually found and removed". This locks current code behavior (`PDFOptimizer.cpp`: `result.metadataStripped=true` unconditionally whenever `options.stripMetadata` is true) as the specified semantic, per the Phase 1 no-strip-semantics-change lock. Consequences: (1) Balanced reports `metadataStripped=true` on ALL inputs, including metadata-free PDFs (`with_javascript.pdf`, `with_form.pdf`, `with_bookmarks_and_links.pdf`); (2) tests MUST assert `metadataStripped=true` on `with_metadata.pdf` under Balanced/MaxCompression but MUST NOT assert `metadataStripped==false` on metadata-free PDFs under those profiles; (3) the "and nothing else" in the `Then` above scopes to the six removal counts (`==0`) only. An "actually removed" semantic (option (b)) is a deferred product decision for a later phase — it requires a code change plus user approval and is explicitly OUT of Phase 1.
 
 #### AC-B3 — Structural writer options verified
 - **Given** `photo_heavy.pdf` (multi-image) and the transparency/dedup PDF
+  (`generateSharedXObject()` → `generateTransparency()`)
 - **When** optimized with defaults (`deduplicateStreams=true, recompressFlate=true`)
   vs `--no-dedup --no-flate-recompress`
-- **Then** default output is ≤ no-opt output; `streamsDeduplicated≥1` on the shared-
-  XObject PDF with defaults and `==0` with `--no-dedup`; `qpdf --check` clean both.
+- **Then** default output is ≤ no-opt output; `streamsDeduplicated == 0` on the
+  shared-XObject PDF with defaults **and** with `--no-dedup`; `qpdf --check` clean both.
+- **Normative — ESC-010 ruling (locked 2026-10-07, no behavior change):** Phase 1 pins
+  the **verified inert-dedup behavior**: `streamsDeduplicated == 0` under defaults on
+  every Phase 1 fixture, including the shared-XObject PDF. Both causes are verified
+  in-tree: (1) the ESC-001 guard at `src/core/PDFOptimizer.cpp:373`
+  (`if (it->second.isIndirect()) continue;`) is always taken, because every
+  `seenStreams` handle comes from `pdf.getAllObjects()` and the line-338 filter
+  (`!obj.isIndirect()`) admits only indirect objects, so `streamsDeduplicated++` at
+  line 377 is dead code; (2) the shared-XObject fixture `generateSharedXObject()`
+  returns `generateTransparency()` (`tests/test_corpus_generator.cpp:450-451`), which
+  places one indirect image object by reference on both pages, so no distinct duplicate
+  pair exists — the `obj.getObjGen() != it->second.getObjGen()` guard at line 366 would
+  skip it even with a working replace path. The Phase 1 verify-only lock forbids the
+  product fix (live dedup replace path) and the corpus change (distinct byte-identical
+  streams) that `>= 1` would require, so `streamsDeduplicated ≥ 1` as originally written
+  is unsatisfiable in Phase 1.
+
+  **DEFERRED follow-up (explicitly not dropped) — OWNED BY PHASE 2 (user-confirmed
+  2026-10-07, ESC-010-FU).** The aspirational `streamsDeduplicated ≥ 1` assertion is
+  deferred to **Phase 2 (Goal C)**, the first product-code-carrying phase after Phase 1,
+  which owns the fix inside its existing structural-correctness scope. Phase 6 (Goal G —
+  Font Dedup + Subsetting) is NOT the owner and stays font-scoped. Deferred work =
+  (a) **product:** replace the inert ESC-001 indirect-handle skip at
+  `src/core/PDFOptimizer.cpp:373` with a correct **direct-copy `replaceObject`** path in
+  `PDFOptimizer.cpp` (pass a direct copy of the replacement stream so QPDF accepts it) so
+  byte-identical *distinct* streams dedup and `streamsDeduplicated` increments;
+  (b) **corpus:** stage a **`$TMPDIR` fixture containing two distinct byte-identical
+  streams** (two separate indirect objects, NOT the reference-shared
+  `transparency.pdf`/`generateSharedXObject()` fixture) and re-verify
+  `streamsDeduplicated ≥ 1`; and (c) **test:** the Phase-1 P1-T3 test pinning `== 0` must
+  be revisited/rewritten to assert `>= 1` in the same phase the fix lands. See Phase 2
+  Goals and AC-C5.
+- **Test note (revisit trigger):** the current P1-T3 test (`tests/test_structure_writer.cpp`,
+  asserting `streamsDeduplicated == 0`) documents this dead-code state and is the correct
+  Phase 1 pin, not an accommodation of a defect. It MUST be rewritten to assert `>= 1` in
+  Phase 2 (the phase that lands the deferred dedup fix, AC-C5); until then `== 0` is
+  normative for Phase 1.
 
 #### AC-B4 — Phase 1 benchmark gate
 - **Given** TSV from before Phase 1 on the 14-file corpus
@@ -369,7 +408,9 @@ selects the fully-implemented `PngCodec` (dead code — alpha silently flattened
 `PDFOptimizer.cpp:234-238` skips CMYK entirely (`imagesSkipped++`) to avoid
 `JpegCodec` RGBA corruption. Phase 2 scopes the slider to lossy classes only, wires
 PNG for alpha/lossless paths, and implements correct CMYK preservation (not blind
-transcoding).
+transcoding). Phase 2 also owns the deferred structural stream-dedup activation
+(ESC-010 follow-up, user-confirmed 2026-10-07): replacing the inert ESC-001
+indirect-handle guard with a direct-copy `replaceObject` path (see AC-C5).
 
 **Goals**
 - Slider (`qualityHint>0`) affects ONLY Photo/Screenshot/LineArt; Monochrome and
@@ -381,6 +422,14 @@ transcoding).
   optimization) was the correct action, with a logged reason. Opt-in transcoding
   via `--transcode-cmyk-to-rgb` (CLI) + GUI checkbox per AC-C3b.
 - `run_optimize --quality` + `--profile` semantics documented in USAGE.md.
+- **Stream dedup activation (structural correctness — deferred ESC-010 follow-up, owned
+  by Phase 2 per user 2026-10-07):** replace the inert ESC-001 indirect-handle guard
+  (`src/core/PDFOptimizer.cpp:373`) with a correct **direct-copy `replaceObject`** path so
+  two distinct-but-byte-identical indirect streams are actually deduplicated and
+  `streamsDeduplicated` increments; add a staged `$TMPDIR` fixture with two distinct
+  byte-identical streams (NOT the reference-shared `transparency.pdf` fixture); and rewrite
+  the Phase-1 P1-T3 `streamsDeduplicated == 0` test to assert `>= 1` in this phase. No
+  font/JBIG2/DPI scope is pulled in.
 
 **Non-Goals**
 - No downsampling (Phase 3), no JBIG2 (Phase 5). CMYK→RGB transcoding is IN scope
@@ -388,7 +437,10 @@ transcoding).
 
 **Manual test PDFs (Phase 2):** `screenshot_flat.pdf`, `line_art.pdf`,
 `photo_jpeg.pdf`, `transparency.pdf` (alpha), `cmyk_image.pdf`, `monochrome_bw.pdf`
-(control: stays zlib), `grayscale_scan.pdf` (control: stays JP2).
+(control: stays zlib), `grayscale_scan.pdf` (control: stays JP2), plus a new staged
+`$TMPDIR` fixture `distinct_duplicate_streams.pdf` — two **distinct** indirect streams
+with byte-identical raw data (NOT the reference-shared `transparency.pdf` fixture; not
+added to the 14 canonical files) for AC-C5.
 
 ### User Journeys (Phase 2)
 
@@ -455,6 +507,26 @@ transcoding).
 - **Then** screenshot/line-art MaxQuality rows change codec (Flate vs DCT) with SSIM
   1.0; photo rows within ±5% (JPEG params only); cmyk row no longer silently skipped
   without reason; all rows still satisfy S2–S5.
+
+#### AC-C5 — Stream dedup activated (deferred ESC-010 follow-up, owned by Phase 2)
+- **Given** a staged `$TMPDIR` fixture containing two **distinct** indirect stream objects
+  with byte-identical raw data and matching signatures (same `/Subtype /Width /Height
+  /ColorSpace /BitsPerComponent`) — separate from the reference-shared `transparency.pdf`
+  fixture, and not added to the 14 canonical corpus files
+- **When** optimized with defaults (`deduplicateStreams=true`) and again with `--no-dedup`
+- **Then** with defaults `result.streamsDeduplicated >= 1` and the output shares one stream
+  object for that pair (`qpdf --check` clean; `qpdf --json` shows a single stream); with
+  `--no-dedup` `streamsDeduplicated == 0` and both stream objects remain; output satisfies
+  S2–S5; and the Phase-1 test that currently pins `streamsDeduplicated == 0`
+  (`tests/test_structure_writer.cpp`, P1-T3) is rewritten to assert `>= 1` against this
+  fixture in this same phase.
+- **Implementation note:** replace the ESC-001 skip
+  (`if (it->second.isIndirect()) continue;` at `src/core/PDFOptimizer.cpp:373`) with a
+  direct-copy replacement — pass a direct copy of the replacement stream to
+  `QPDF::replaceObject(obj.getObjGen(), directCopy)` so QPDF accepts it — keeping the
+  existing try/catch so one bad pair never fails the whole file. `seenStreams` may keep
+  storing indirect handles for signature comparison; only the object handed to
+  `replaceObject` must be a direct copy.
 
 ## Phase 3 (Goal D) — Effective-DPI Downsampling
 
@@ -826,6 +898,15 @@ direction, and locks CI/packaging so every earlier phase stays green.
 - **Target DPI / DPI floor:** per-profile resampling target (e.g. 300/150/96) and the
   minimum dimension below which downsampling stops; Phase 3.
 - **Peak RSS:** maximum resident set size during one optimization; Phase 8 metric.
+- **Stream dedup:** `OptimizationResult.streamsDeduplicated` counts stream pairs actually
+  replaced. In **Phase 1** it is pinned **`0` under every input, including the
+  shared-XObject PDF**, because the ESC-001 indirect-handle guard (`PDFOptimizer.cpp:373`)
+  makes the increment dead code and the shared-XObject fixture reference-shares one indirect
+  object (no distinct duplicate pair). The aspirational `>= 1` is **deferred to Phase 2**
+  (owned by Phase 2 per user 2026-10-07; see AC-B3 and AC-C5): Phase 2 replaces the inert
+  ESC-001 guard with a direct-copy `replaceObject` path, adds a `$TMPDIR` distinct
+  byte-identical-streams fixture, and rewrites the P1-T3 `== 0` test to `>= 1`. Ruled
+  2026-10-07 per ESC-010 / ESC-010-FU.
 
 ## Assumptions Log (additions for Phases 1–8)
 
@@ -838,6 +919,8 @@ direction, and locks CI/packaging so every earlier phase stays green.
 | Font subset (HarfBuzz hb-subset) ON for Balanced/MaxCompression, OFF for MaxQuality | Matches strip-philosophy of profiles; subsetter + matrix locked 2026-10-04 | y | 2026-10-04 |
 | Re-encrypt default OFF (output unencrypted unless opted) | Matches test-fixture behavior; confirmed 2026-10-04 | y | 2026-10-04 |
 | Parallelism default = hardware core count via `--jobs` | Standard practice; determinism gate guards it | n | 2026-10-04 |
+| Stream dedup is inert in Phase 1: `streamsDeduplicated == 0` under defaults on every fixture (ESC-001 `isIndirect` guard always taken; shared-XObject fixture reference-shares one indirect object) | Verified against `PDFOptimizer.cpp:338,366,373` and `test_corpus_generator.cpp:450-451`; Phase 1 verify-only lock bars the product + corpus fix | y (Phase 1 behavior) / y (fix owned by Phase 2) | 2026-10-07 |
+| The deferred stream-dedup fix (direct-copy `replaceObject` in `PDFOptimizer.cpp` + distinct-byte-identical `$TMPDIR` fixture + P1-T3 test rewrite to `>= 1`) is owned by **Phase 2**, not Phase 6 | User confirmed 2026-10-07 (ESC-010-FU): Phase 2 is the first product-code-carrying phase and the fix sits inside its structural-correctness scope; Phase 6 stays font-scoped | y | 2026-10-07 |
 
 ## Risks / Unknowns (additions for Phases 1–8)
 
@@ -858,5 +941,12 @@ direction, and locks CI/packaging so every earlier phase stays green.
 All 8 Phase 1–8 open questions answered 2026-10-04 (see `open_questions.md`); no
 blocking gap remains. CMYK-transcode color-shift threshold defined in AC-C3b (SSIM ≥ 0.98
 render match; Plan chooses the implementation-side ΔE metric).
+
+ESC-010 (2026-10-07): AC-B3 reworded to pin Phase 1 `streamsDeduplicated == 0` (inert
+dedup: ESC-001 indirect guard + reference-shared fixture); the aspirational
+`streamsDeduplicated >= 1` is retained as an explicit DEFERRED follow-up now **owned by
+Phase 2 (Goal C)** — user-confirmed 2026-10-07 via ESC-010-FU (Phase 6 stays font-scoped)
+— AC-B3, Glossary, Assumptions Log, `design_gaps.md`, and Phase 2 Goals/AC-C5 updated. The
+P1-T3 test asserting `== 0` must be rewritten to `>= 1` in Phase 2 when the fix lands.
 
 Status: READY_FOR_PLAN

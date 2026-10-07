@@ -9,6 +9,12 @@
 > batch UX, Ph.5=F JBIG2, Ph.6=G fonts, Ph.7=H passwords, Ph.8=I
 > perf/packaging. Target-size mode is NOT in scope in any phase (OQ E-2).
 > macOS-only (OQ I-6).
+>
+> **2026-10-07 revision:** Phase-2 **AC-C5** (deferred ESC-010 stream-dedup
+> activation — inert ESC-001 guard → direct-copy `replaceObject`, staged
+> `distinct_duplicate_streams.pdf`, P1-T3 rewrite to `>= 1`) folded into Phase 2.
+> Phase 1 stays verify-only; no font/JBIG2/DPI scope pulled in. Re-validated
+> `APPROVED`.
 
 ## Phases (Phase 0 — retained baseline)
 
@@ -68,18 +74,21 @@
 - **Goal:** Lock existing `forProfile` defaults and writer behavior with verifier tests; close doc gaps only. No strip-semantics change (locked: MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, `linearize=false`).
 - **Requirements / Journeys covered:** AC-B1 (defaults tests), AC-B2 (per-corpus stripping incl. non-JS `/OpenAction` GoTo survival), AC-B3 (dedup/object-stream/Flate flags), AC-B4 (±2% benchmark gate); J-B1, J-B2.
 - **Dependencies:** None (first; builds on locked Phase-0 baseline + 14-file corpus).
-- **Scope:** New `tests/test_profile_defaults.cpp` (`TEST(ProfileDefaults,…)` ×3 + CLI round-trip for `--strip-*/--no-strip-*`, `--linearize/--no-flate-recompress/--no-dedup`); `/AA` + non-JS `/OpenAction` handling completion; `--linearize` USAGE.md gap; no `DecisionEngine`/codec/DPI change.
+- **Scope:** New `tests/test_profile_defaults.cpp` (`TEST(ProfileDefaults,…)` ×3 + CLI round-trip for `--strip-*/--no-strip-*`, `--linearize/--no-flate-recompress/--no-dedup`); `/AA` + non-JS `/OpenAction` handling completion; `--linearize` USAGE.md gap; no `DecisionEngine`/codec/DPI change. The P1-T3 dedup test (`tests/test_structure_writer.cpp`, `streamsDeduplicated == 0`) is the correct Phase-1 pin (verify-only lock) and is rewritten to `>= 1` in Phase 2 (AC-C5) when the deferred fix lands.
 - **Per-phase gates:** Benchmark before/after within ±2% every row (no compression change expected); manual PDFs: `with_form`, `with_bookmarks_and_links`, `with_javascript`, `with_metadata`, `transparency`, `text_only` (no-growth control); S1–S9.
 - **STOP boundary:** STOP after verifier tests green + USAGE.md defaults table + both TSVs archived — no Phase 2 work until AC-B1/B2/B3 pass and any default dispute is filed as a requirements change.
 
 ### Phase 2 (Goal C) — Codec-Selection Correctness
 
-- **Goal:** Scope slider to lossy classes, wire PNG for alpha/lossless, preserve CMYK correctly with opt-in transcode.
-- **Requirements / Journeys covered:** AC-C1 (slider lossy-only + `TEST(DecisionEngine, SliderOnlyAffectsLossyClasses)`), AC-C2 (PNG for alpha/MaxQuality lossless, SSIM 1.0, `m_pngCodec` reachable), AC-C3 (CMYK preserved, never corrupted), AC-C3b (`--transcode-cmyk-to-rgb` + GUI checkbox, SSIM≥0.98, `transcodedCmyk=1`), AC-C4 benchmark gate; J-C1, J-C2.
-- **Dependencies:** Phase 1 (profile defaults locked first; routing builds on them).
-- **Scope:** `DecisionEngine.cpp` branch rework (lossy-only slider; PNG branch; ScannedText profile-driven, Monochrome always lossless); new `CmykHandler` (ICC/DeviceCMYK preserve + Adobe APP14 safety + skip-with-reason logging; opt-in transcode with internal ΔE sampling); `run_optimize --transcode-cmyk-to-rgb`; GUI checkbox; USAGE.md slider/profile/CMYK docs.
-- **Per-phase gates:** Benchmark: screenshot/line-art MaxQuality rows change codec at SSIM 1.0, photos ±5%, CMYK row reason-logged, all rows S2–S5; manual PDFs: `screenshot_flat`, `line_art`, `photo_jpeg`, `transparency` (alpha), `cmyk_image`, `monochrome_bw` + `grayscale_scan` controls.
-- **STOP boundary:** STOP after AC-C1/C2/C3/C3b tests + CMYK Chrome+Preview visual check + TSV delta — no downsampling work until codec routing is pinned (Phase 3 consumes its output dims).
+- **Goal:** Scope slider to lossy classes, wire PNG for alpha/lossless, preserve CMYK correctly with opt-in transcode, and activate stream dedup (replace the inert ESC-001 guard with a direct-copy `replaceObject` path).
+- **Requirements / Journeys covered:** AC-C1 (slider lossy-only + `TEST(DecisionEngine, SliderOnlyAffectsLossyClasses)`), AC-C2 (PNG for alpha/MaxQuality lossless, SSIM 1.0, `m_pngCodec` reachable), AC-C3 (CMYK preserved, never corrupted), AC-C3b (`--transcode-cmyk-to-rgb` + GUI checkbox, SSIM≥0.98, `transcodedCmyk=1`), AC-C4 benchmark gate, AC-C5 (stream dedup activated — deferred ESC-010 follow-up: `streamsDeduplicated >= 1` with defaults on a staged distinct-byte-identical fixture, `== 0` with `--no-dedup`, `qpdf --check` clean, S2–S5, benchmark before/after); J-C1, J-C2.
+- **Dependencies:** Phase 1 (profile defaults locked first; routing builds on them; the Phase-1 P1-T3 `streamsDeduplicated == 0` test is rewritten here).
+- **Scope:** `DecisionEngine.cpp` branch rework (lossy-only slider; PNG branch; ScannedText profile-driven, Monochrome always lossless); new `CmykHandler` (ICC/DeviceCMYK preserve + Adobe APP14 safety + skip-with-reason logging; opt-in transcode with internal ΔE sampling); `run_optimize --transcode-cmyk-to-rgb`; GUI checkbox; USAGE.md slider/profile/CMYK docs. **Plus the AC-C5 structural stream-dedup activation:**
+  - **Product fix:** in `src/core/PDFOptimizer.cpp` replace the inert ESC-001 indirect-handle skip at line 373 (`if (it->second.isIndirect()) continue;`) with a **direct-copy `replaceObject`** path — pass a direct copy of the replacement stream to `QPDF::replaceObject(obj.getObjGen(), directCopy)` so QPDF accepts it — so two distinct-but-byte-identical indirect streams actually dedup and `streamsDeduplicated` increments. Preserve the existing `obj.getObjGen() != it->second.getObjGen()` guard (line 366) and the per-pair try/catch (lines 372-382) so one bad pair never fails the whole file; `seenStreams` may keep storing indirect handles for signature comparison — only the object handed to `replaceObject` must be a direct copy.
+  - **New staged fixture:** `distinct_duplicate_streams.pdf` in `$TMPDIR` — two **distinct** indirect stream objects with byte-identical raw data and matching signatures (same `/Subtype /Width /Height /ColorSpace /BitsPerComponent`). This is NOT the reference-shared `transparency.pdf` / `generateSharedXObject()` fixture and is NOT added to the 14 canonical corpus files.
+  - **Test rewrite:** the Phase-1 P1-T3 test (`tests/test_structure_writer.cpp`, currently asserting `streamsDeduplicated == 0`) is rewritten to assert `>= 1` against the new staged fixture, retaining a `== 0` assertion for the `--no-dedup` run (P1-T3-T01/T03 continue to cover the shared-XObject PDF).
+- **Per-phase gates:** Benchmark: screenshot/line-art MaxQuality rows change codec at SSIM 1.0, photos ±5%, CMYK row reason-logged, all rows S2–S5; manual PDFs: `screenshot_flat`, `line_art`, `photo_jpeg`, `transparency` (alpha), `cmyk_image`, `monochrome_bw` + `grayscale_scan` controls, plus the staged `distinct_duplicate_streams.pdf` for AC-C5. **AC-C5 gates:** with defaults `result.streamsDeduplicated >= 1` on the staged fixture and the output shares one stream object for that pair (`qpdf --check` clean; `qpdf --json` shows a single stream); with `--no-dedup` `streamsDeduplicated == 0` and both stream objects remain; S2–S5 hold; benchmark before/after on the same corpus with dedup-bearing rows ≤ baseline (additive, no regression on other rows).
+- **STOP boundary:** STOP after AC-C1/C2/C3/C3b/C5 tests + CMYK Chrome+Preview visual check + TSV delta — no downsampling work until codec routing and stream dedup are pinned (Phase 3 consumes its output dims).
 
 ### Phase 3 (Goal D) — Effective-DPI Downsampling
 
@@ -149,7 +158,7 @@
 ### Phases 1–8 (additions — sequencing rationale, not requirements changes)
 
 - Phase ordering is benchmark-isolating: codec routing (2) → dims (3) → UI (4) → 1-bit (5) → fonts (6) → passwords (7) → perf/packaging (8), so each TSV delta is attributable to one cause. (Not in requirements.md; sequencing rationale.)
-- Staged fixtures beyond the canonical 14 (true-1-bit scan, oversampled 600-DPI, tiny-icon, ≥200MB mixed, CJK) live in `$TMPDIR`, are never committed, and need no requirements change (consistent with the `$TMPDIR`-ephemera constraint).
+- Staged fixtures beyond the canonical 14 (true-1-bit scan, oversampled 600-DPI, tiny-icon, ≥200MB mixed, CJK, and the Phase-2 `distinct_duplicate_streams.pdf`) live in `$TMPDIR`, are never committed, and need no requirements change (consistent with the `$TMPDIR`-ephemera constraint; design gap #10's locked direction; the canonical 14 stay exactly 14 per the safety invariant).
 - Phase 8 RSS cap is measure-first-then-lock (≤1GB starting hypothesis per AC-I1); the measurement run itself is a plan step, not a pre-declared pass/fail number.
 - Resampler choice (Lanczos vs bicubic) and CMYK ΔE sampling metric are implementation-side selections bounded by SSIM gates (AC-C3b/AC-D3); Task Manager/Build choose within those bounds.
 - Phase numbering follows requirements.md Part II exactly (Ph.4 = Goal E batch UX). No new phase is introduced for any shorthand; all scope maps to existing AC.
@@ -159,5 +168,7 @@
 _Phases 0 F1–F5 reviewed in the Phase-0 cycle: F1 locked as planning note RG-001 (exactly 14 files, see `docs/plan_notes.md`); F2–F5 correctly flagged as implementation notes / risks, not requirements escalations, and addressed by the architecture's mitigations. No ESCALATED_TO_REQUIREMENTS was required._
 
 _Phases 1–8 FI-1–FI-3 from the proposal evaluated in this cycle (see `docs/plan_review.md` Requirements Escalations): FI-1 (AC-E1 timing testability), FI-2 (Phase 6 form-font detector unspecified), FI-3 (Phase 8 RSS cap pending measurement) are all testability/implementation notes already accommodated by the requirements text (AC-E1 manual+inspection verification, AC-I1 measure-then-lock, AcroForm-reference walk within the specified exemption) — surfaced, not reinterpreted, no escalation._
+
+- **FI-4 — Phase 6 (Goal G) font-dedup wording still references the ESC-001 indirect-handle guard that Phase 2 removes (added 2026-10-07 revision).** Requirement/journey: Phase 6 Goals ("same hash-join pattern as stream dedup, with the ESC-001 indirect-handle guard") and `design_gaps.md` #15. Why it can't be satisfied as written: Phase 2's AC-C5 replaces the inert ESC-001 `isIndirect()` guard at `PDFOptimizer.cpp:373` with a direct-copy `replaceObject` path, so after Phase 2 the ESC-001 guard no longer exists and Phase 6 would cite a removed mechanism. This is a genuine requirements-staleness gap surfaced while folding in the Phase-2 addition, not a Phase-2 defect (Phase 2 stays requirements-bound; no font work is pulled in). Not a blocking requirements defect requiring escalation — Phase 6 is planned later; when Phase 6 is planned the Phase 6 Goal wording should cite the Phase-2 direct-copy dedup path as the pattern to reuse. Until then `docs/architecture.md` labels Phase 6's dedup as reusing the Phase-2 corrected pattern. Flagged, not silently rewritten.
 
 Status: READY_FOR_TASK_MANAGER

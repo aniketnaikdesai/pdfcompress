@@ -127,15 +127,18 @@ to process them as a batch.
 3. Each file is processed independently. Output is written to the same
    directory with the suffix `_optimized` (e.g. `report_optimized.pdf`).
 4. The optimization pipeline:
-   - Strips interactive elements (AcroForms, outlines/bookmarks, page
-     annotations, named destinations, JavaScript)
+   - Applies the selected profile's stripping defaults (Balanced strips
+     JavaScript and metadata; Max Compression strips all interactive
+     elements and metadata; Max Quality strips nothing) — see
+     [Compression Profiles](#compression-profiles)
    - Iterates every embedded image across all pages
    - Decompresses each image stream (TurboJPEG for JPEG, QPDF for Flate)
    - Runs pixel-level analysis to classify the image
    - Selects the best codec and quality settings
    - Re-encodes the stream and replaces it in the PDF if the result is
      smaller
-   - Writes the output with linearization (fast web view)
+   - Writes the output (linearization is off unless the **Linearize**
+     checkbox is enabled)
 5. Results show per-file:
    - Original and optimized file sizes
    - Size reduction percentage
@@ -169,17 +172,51 @@ build/diagnose input.pdf
 
 ## Compression Profiles
 
-The Decision Engine supports three profiles, selected programmatically
-(the GUI currently uses **Balanced**):
+The Decision Engine supports three profiles. In the GUI choose one from the
+**Profile** dropdown (default **Balanced**); on the CLI select one with
+`--profile <max-quality|balanced|max-compression>`.
 
-| Profile         | JPEG Quality | JPEG 2000 Rate | zlib Level | Notes |
-|-----------------|-------------|----------------|------------|-------|
-| Max Quality     | 90 / slider | Lossless (0)   | n/a        | Preserves detail; 4:4:4 chroma |
-| Balanced (default) | 70 / slider | 20:1       | 9          | Good trade-off; 4:2:0 chroma |
-| Max Compression | 50 / slider | 50:1           | 9          | Smallest files; 4:2:0 chroma |
+Each profile is a starting set of options produced by
+`OptimizationOptions::forProfile`. The table below lists exactly those
+defaults; every stripping option can then be overridden individually with
+the flags documented in the next section.
 
-When the slider is adjusted, its value overrides the profile's default
-JPEG quality.
+| Profile            | Links | Other annots | Bookmarks | Forms | JavaScript | Named dests | Metadata | Linearize | Flate recompress | Dedup |
+|--------------------|-------|--------------|-----------|-------|------------|-------------|----------|-----------|------------------|-------|
+| Max Quality        | keep  | keep         | keep      | keep  | keep       | keep        | keep     | off       | on               | on    |
+| Balanced (default) | keep  | keep         | keep      | keep  | **strip**  | keep        | **strip**| off       | on               | on    |
+| Max Compression    | strip | strip        | strip     | strip | strip      | strip       | strip    | off       | on               | on    |
+
+- **Max Quality** strips nothing — interactive elements and metadata are
+  preserved.
+- **Balanced** strips JavaScript and metadata only; links, other
+  annotations, bookmarks, forms, and named destinations are preserved.
+- **Max Compression** strips everything listed.
+- Linearization is **off** for all three profiles; enable it explicitly
+  with `--linearize`.
+- Flate recompression and stream de-duplication are **on** for all three
+  profiles; disable them with `--no-flate-recompress` and `--no-dedup`.
+
+### Profile and stripping flags
+
+| Flag | Effect |
+|------|--------|
+| `--profile <max-quality\|balanced\|max-compression>` | Select the profile defaults (default `balanced`) |
+| `--quality <1-100>` | JPEG quality hint; `0` (the default) uses the profile default |
+| `--strip-links` / `--no-strip-links` | Strip (or preserve) link annotations and their URI/GoTo/Launch actions |
+| `--strip-annots` / `--no-strip-annots` | Strip (or preserve) non-link annotations |
+| `--strip-bookmarks` / `--no-strip-bookmarks` | Strip (or preserve) the document outline/bookmarks |
+| `--strip-forms` / `--no-strip-forms` | Strip (or preserve) AcroForm forms and widget annotations |
+| `--strip-js` / `--no-strip-js` | Strip (or preserve) JavaScript actions in `/Names`, `/OpenAction`, `/AA` |
+| `--strip-dests` / `--no-strip-dests` | Strip (or preserve) named destinations |
+| `--strip-metadata` / `--no-strip-metadata` | Strip (or preserve) `/Info`, XMP `/Metadata`, `PieceInfo`, `LastModified`, `Thumb` |
+| `--linearize` | Enable PDF linearization (Fast Web View); off by default |
+| `--no-flate-recompress` | Do not recompress Flate streams at level 9 (on by default) |
+| `--no-dedup` | Do not de-duplicate byte-identical streams (on by default) |
+
+Stripping flags override the selected profile's defaults, so for example
+`--profile balanced --strip-bookmarks` strips bookmarks on top of the
+Balanced defaults.
 
 ---
 
@@ -196,7 +233,9 @@ external ML/AI libraries):
 | Scanned Text   | Grayscale, strong edges, moderate entropy, high DPI | JPEG 2000 |
 | Monochrome     | ≤4 unique colors, grayscale | zlib/Deflate (lossless) |
 
-All classifications fall back to JPEG when the slider is active.
+When a JPEG quality hint is set (the slider moved off its default),
+Screenshot and Line Art images use JPEG instead of the Max Quality zlib
+fallback; Monochrome stays zlib and Scanned Text stays JPEG 2000.
 
 ---
 
@@ -204,8 +243,14 @@ All classifications fall back to JPEG when the slider is active.
 
 The results pane reports:
 
-- **Size Reduction** — `(1 - optimized/original) * 100`. Typical savings
-  range from 20–80% depending on the original PDF contents.
+- **Size Reduction** — `(1 - optimized/original) * 100`. Measured on the
+  14-file benchmark corpus (archived as
+  `build/benchmark_results_20261007_160128.tsv`), pdfcompress results
+  ranged from -4.65% (`text_only.pdf`, a slight increase) to 47.55%
+  (`line_art.pdf`), with a median of about 11%; image-heavy files benefit
+  most. Encrypted PDFs are rejected before optimization, so their savings
+  are not meaningful. Actual savings depend entirely on the original PDF
+  contents.
 - **Images Processed** — count of image streams that were successfully
   re-encoded and replaced. Shared XObjects are de-duplicated.
 - **Annotations Removed** — page-level `/Annots` entries stripped
@@ -249,7 +294,8 @@ The pipeline flow:
 
 **Inspect** → PDFium extracts images → **Analyze** → classify each image
 → **Decide** → pick codec + quality → **Encode** → replace stream →
-**Write** → QPDFWriter produces linearized output.
+**Write** → QPDFWriter produces the output (linearized only when
+requested).
 
 ---
 
@@ -261,7 +307,8 @@ The pipeline flow:
 - **JPEG XL** is not yet integrated (listed in the spec but not wired).
 - **JBIG2** is not yet integrated (monochrome uses zlib instead).
 - **No before/after preview** yet.
-- **Tests** directory is empty — no automated tests exist.
+- **Tests** — automated GoogleTest suites live in `tests/` and are built as
+  the `pdfcompress_tests` target; run them with `ctest --test-dir build`.
 
 ---
 

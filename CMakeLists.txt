@@ -154,6 +154,9 @@ if(BUILD_TESTING)
         tests/test_pdf_optimizer.cpp
         tests/test_corpus_generator.cpp
         tests/test_corpus_verifier.cpp
+        tests/test_structure_writer.cpp
+        tests/test_stripping_profiles.cpp
+        tests/test_profile_defaults.cpp
     )
     target_link_libraries(pdfcompress_tests PRIVATE
         GTest::gtest GTest::gtest_main
