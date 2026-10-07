@@ -1,4 +1,5 @@
 #include "JpegCodec.h"
+#include "../core/CmykHandler.h"
 #include <turbojpeg.h>
 #include <stdexcept>
 #include <iostream>
@@ -75,6 +76,33 @@ std::vector<uint8_t> JpegCodec::encode(const uint8_t* pixels,
     tjDestroy(tjInstance);
 
     return result;
+}
+
+std::vector<uint8_t> JpegCodec::encodeCmykAsRgb(const uint8_t* cmyk,
+                                                int width, int height,
+                                                const CompressionParams& params,
+                                                bool inverted,
+                                                float* maxDeltaE) {
+    if (maxDeltaE) *maxDeltaE = 0.0f;
+    if (!cmyk || width <= 0 || height <= 0) {
+        return {};
+    }
+
+    // Transcode through CmykHandler so the Adobe APP14 / Decode inversion is
+    // handled and a bad conversion is rejected by the internal delta-E gate
+    // rather than emitted.
+    auto transcoded = CmykHandler::transcodeToRgb(cmyk, width, height, inverted);
+    if (maxDeltaE) *maxDeltaE = transcoded.deltaE.maxDeltaE;
+    if (!transcoded.ok || transcoded.rgb.empty()) {
+        return {};
+    }
+
+    CompressionParams rgbParams = params;
+    rgbParams.width = width;
+    rgbParams.height = height;
+    rgbParams.channels = 3;
+    rgbParams.colorSpace = ColorSpace::DeviceRGB;
+    return encode(transcoded.rgb.data(), rgbParams);
 }
 
 } // namespace pdfcompress

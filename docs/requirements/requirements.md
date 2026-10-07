@@ -378,13 +378,17 @@ verifier tests, and completes small gaps (e.g. `/AA` + `/OpenAction` non-JS hand
   which owns the fix inside its existing structural-correctness scope. Phase 6 (Goal G —
   Font Dedup + Subsetting) is NOT the owner and stays font-scoped. Deferred work =
   (a) **product:** replace the inert ESC-001 indirect-handle skip at
-  `src/core/PDFOptimizer.cpp:373` with a correct **direct-copy `replaceObject`** path in
-  `PDFOptimizer.cpp` (pass a direct copy of the replacement stream so QPDF accepts it) so
+  `src/core/PDFOptimizer.cpp:373` with a correct **reference-rewriting** dedup path in
+  `PDFOptimizer.cpp` (walk the duplicate stream's referrers and repoint every reference to
+  the kept byte-identical stream via `replaceKey`/`setArrayItem`; the duplicate then drops —
+  `replaceObject` is infeasible here because it rejects indirect handles except a
+  self-stream, `QPDF_objects.cc:1967-1968`, and streams are always indirect) so
   byte-identical *distinct* streams dedup and `streamsDeduplicated` increments;
   (b) **corpus:** stage a **`$TMPDIR` fixture containing two distinct byte-identical
-  streams** (two separate indirect objects, NOT the reference-shared
-  `transparency.pdf`/`generateSharedXObject()` fixture) and re-verify
-  `streamsDeduplicated ≥ 1`; and (c) **test:** the Phase-1 P1-T3 test pinning `== 0` must
+  streams that are both actually referenced** (two separate indirect objects, each reached
+  from page content/resources via a dict key or array item so referrers exist to repoint —
+  NOT the reference-shared `transparency.pdf`/`generateSharedXObject()` fixture) and
+  re-verify `streamsDeduplicated ≥ 1`; and (c) **test:** the Phase-1 P1-T3 test pinning `== 0` must
   be revisited/rewritten to assert `>= 1` in the same phase the fix lands. See Phase 2
   Goals and AC-C5.
 - **Test note (revisit trigger):** the current P1-T3 test (`tests/test_structure_writer.cpp`,
@@ -410,7 +414,7 @@ selects the fully-implemented `PngCodec` (dead code — alpha silently flattened
 PNG for alpha/lossless paths, and implements correct CMYK preservation (not blind
 transcoding). Phase 2 also owns the deferred structural stream-dedup activation
 (ESC-010 follow-up, user-confirmed 2026-10-07): replacing the inert ESC-001
-indirect-handle guard with a direct-copy `replaceObject` path (see AC-C5).
+indirect-handle guard with a reference-rewriting dedup path (see AC-C5).
 
 **Goals**
 - Slider (`qualityHint>0`) affects ONLY Photo/Screenshot/LineArt; Monochrome and
@@ -424,12 +428,16 @@ indirect-handle guard with a direct-copy `replaceObject` path (see AC-C5).
 - `run_optimize --quality` + `--profile` semantics documented in USAGE.md.
 - **Stream dedup activation (structural correctness — deferred ESC-010 follow-up, owned
   by Phase 2 per user 2026-10-07):** replace the inert ESC-001 indirect-handle guard
-  (`src/core/PDFOptimizer.cpp:373`) with a correct **direct-copy `replaceObject`** path so
-  two distinct-but-byte-identical indirect streams are actually deduplicated and
-  `streamsDeduplicated` increments; add a staged `$TMPDIR` fixture with two distinct
-  byte-identical streams (NOT the reference-shared `transparency.pdf` fixture); and rewrite
-  the Phase-1 P1-T3 `streamsDeduplicated == 0` test to assert `>= 1` in this phase. No
-  font/JBIG2/DPI scope is pulled in.
+  (`src/core/PDFOptimizer.cpp:373`) with a correct **reference-rewriting** dedup path (walk
+  the duplicate stream's referrers and repoint each reference to the kept byte-identical
+  stream via `replaceKey`/`setArrayItem`; the duplicate then drops — `replaceObject`
+  rejects indirect handles except a self-stream, `QPDF_objects.cc:1967-1968`, and streams
+  are always indirect) so two distinct-but-byte-identical indirect streams are actually
+  deduplicated and `streamsDeduplicated` increments; add a staged `$TMPDIR` fixture with
+  two distinct byte-identical streams that are **both actually referenced** from page
+  content (NOT the reference-shared `transparency.pdf` fixture); and rewrite the Phase-1
+  P1-T3 `streamsDeduplicated == 0` test to assert `>= 1` in this phase. No font/JBIG2/DPI
+  scope is pulled in.
 
 **Non-Goals**
 - No downsampling (Phase 3), no JBIG2 (Phase 5). CMYK→RGB transcoding is IN scope
@@ -509,10 +517,13 @@ added to the 14 canonical files) for AC-C5.
   without reason; all rows still satisfy S2–S5.
 
 #### AC-C5 — Stream dedup activated (deferred ESC-010 follow-up, owned by Phase 2)
-- **Given** a staged `$TMPDIR` fixture containing two **distinct** indirect stream objects
-  with byte-identical raw data and matching signatures (same `/Subtype /Width /Height
-  /ColorSpace /BitsPerComponent`) — separate from the reference-shared `transparency.pdf`
-  fixture, and not added to the 14 canonical corpus files
+- **Given** a staged `$TMPDIR` fixture (`distinct_duplicate_streams.pdf`) containing two
+  **distinct** indirect stream objects with byte-identical raw data and matching signatures
+  (same `/Subtype /Width /Height /ColorSpace /BitsPerComponent`), where **both streams are
+  actually referenced** from page content/resources (each reachable via a dict key or array
+  item) so the dedup referrer walk has references to repoint — separate from the
+  reference-shared `transparency.pdf` fixture, and not added to the 14 canonical corpus
+  files
 - **When** optimized with defaults (`deduplicateStreams=true`) and again with `--no-dedup`
 - **Then** with defaults `result.streamsDeduplicated >= 1` and the output shares one stream
   object for that pair (`qpdf --check` clean; `qpdf --json` shows a single stream); with
@@ -522,11 +533,20 @@ added to the 14 canonical files) for AC-C5.
   fixture in this same phase.
 - **Implementation note:** replace the ESC-001 skip
   (`if (it->second.isIndirect()) continue;` at `src/core/PDFOptimizer.cpp:373`) with a
-  direct-copy replacement — pass a direct copy of the replacement stream to
-  `QPDF::replaceObject(obj.getObjGen(), directCopy)` so QPDF accepts it — keeping the
-  existing try/catch so one bad pair never fails the whole file. `seenStreams` may keep
-  storing indirect handles for signature comparison; only the object handed to
-  `replaceObject` must be a direct copy.
+  **reference-rewriting** dedup mechanism. For each byte-identical duplicate pair, walk the
+  duplicate stream's referrers and repoint every reference from the duplicate object to the
+  kept byte-identical stream — via `QPDFObjectHandle::replaceKey` for dictionary entries
+  and `QPDFObjectHandle::setArrayItem` for array entries — after which the duplicate
+  stream is unreferenced and dropped by the existing writer setting
+  (`setPreserveUnreferencedObjects(false)`). This is required because QPDF's `replaceObject`
+  rejects indirect handles except a self-stream (`QPDF_objects.cc:1967-1968`; QPDF 12.3.2:
+  `if (!oh || (oh.isIndirect() && !(oh.isStream() && oh.getObjGen() == og))) throw ...`),
+  and PDF streams are always indirect — so the previously-specified direct-copy
+  `replaceObject` path is infeasible. `seenStreams` may keep storing indirect handles for
+  signature comparison; only the referrer walk/repoint acts on the pair. Keep the existing
+  try/catch so one bad pair never fails the whole file. The staged fixture must actually
+  reference both duplicate streams (see `Given`); unreferenced duplicates would be pruned
+  before dedup and prove nothing.
 
 ## Phase 3 (Goal D) — Effective-DPI Downsampling
 
@@ -904,8 +924,10 @@ direction, and locks CI/packaging so every earlier phase stays green.
   makes the increment dead code and the shared-XObject fixture reference-shares one indirect
   object (no distinct duplicate pair). The aspirational `>= 1` is **deferred to Phase 2**
   (owned by Phase 2 per user 2026-10-07; see AC-B3 and AC-C5): Phase 2 replaces the inert
-  ESC-001 guard with a direct-copy `replaceObject` path, adds a `$TMPDIR` distinct
-  byte-identical-streams fixture, and rewrites the P1-T3 `== 0` test to `>= 1`. Ruled
+  ESC-001 guard with a reference-rewriting dedup path (referrer repoint; `replaceObject` is
+  infeasible for indirect streams per `QPDF_objects.cc:1967-1968`), adds a `$TMPDIR`
+  distinct byte-identical-streams fixture (both streams actually referenced), and rewrites
+  the P1-T3 `== 0` test to `>= 1`. Ruled
   2026-10-07 per ESC-010 / ESC-010-FU.
 
 ## Assumptions Log (additions for Phases 1–8)
@@ -920,7 +942,7 @@ direction, and locks CI/packaging so every earlier phase stays green.
 | Re-encrypt default OFF (output unencrypted unless opted) | Matches test-fixture behavior; confirmed 2026-10-04 | y | 2026-10-04 |
 | Parallelism default = hardware core count via `--jobs` | Standard practice; determinism gate guards it | n | 2026-10-04 |
 | Stream dedup is inert in Phase 1: `streamsDeduplicated == 0` under defaults on every fixture (ESC-001 `isIndirect` guard always taken; shared-XObject fixture reference-shares one indirect object) | Verified against `PDFOptimizer.cpp:338,366,373` and `test_corpus_generator.cpp:450-451`; Phase 1 verify-only lock bars the product + corpus fix | y (Phase 1 behavior) / y (fix owned by Phase 2) | 2026-10-07 |
-| The deferred stream-dedup fix (direct-copy `replaceObject` in `PDFOptimizer.cpp` + distinct-byte-identical `$TMPDIR` fixture + P1-T3 test rewrite to `>= 1`) is owned by **Phase 2**, not Phase 6 | User confirmed 2026-10-07 (ESC-010-FU): Phase 2 is the first product-code-carrying phase and the fix sits inside its structural-correctness scope; Phase 6 stays font-scoped | y | 2026-10-07 |
+| The deferred stream-dedup fix (reference-rewriting dedup in `PDFOptimizer.cpp` + distinct-byte-identical `$TMPDIR` fixture whose two streams are both actually referenced + P1-T3 test rewrite to `>= 1`) is owned by **Phase 2**, not Phase 6 | User confirmed 2026-10-07 (ESC-010-FU): Phase 2 is the first product-code-carrying phase and the fix sits inside its structural-correctness scope; Phase 6 stays font-scoped | y | 2026-10-07 |
 
 ## Risks / Unknowns (additions for Phases 1–8)
 

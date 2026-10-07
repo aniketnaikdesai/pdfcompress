@@ -29,10 +29,10 @@ TEST(StructureWriter, DefaultOutputNotLargerThanNoOpt) {
     EXPECT_LE(rDefault.optimizedSizeBytes, rNoOpt.optimizedSizeBytes);
 }
 
-// P1-T3-T02: dedup counter on the shared-XObject corpus PDF.
+// P1-T3-T02 (Phase 2 rewrite): dedup counter on the distinct-duplicate fixture.
 TEST(StructureWriter, DedupCountedWithDefaultsZeroWithout) {
     TestCorpusGenerator generator;
-    std::string input = generator.generateSharedXObject();
+    std::string input = generator.generateDistinctDuplicateStreams();
 
     OptimizationOptions withDefaults;  // deduplicateStreams=true
     OptimizationOptions noDedup;
@@ -47,11 +47,88 @@ TEST(StructureWriter, DedupCountedWithDefaultsZeroWithout) {
     auto rNoDedup = optimizer.optimize(input, outNoDedup, noDedup);
     ASSERT_TRUE(rNoDedup.success) << rNoDedup.errorMessage;
 
-    // Current-behavior pin (Phase 1): dedup counting is inert under the
-    // ESC-001 isIndirect guard, and the reference-shared fixture shares one
-    // indirect object by reference, so no distinct duplicate pair exists.
-    EXPECT_EQ(rDefault.streamsDeduplicated, 0);
+    // AC-C5: the two distinct byte-identical streams collapse with defaults;
+    // --no-dedup leaves both in place and reports zero.
+    EXPECT_GE(rDefault.streamsDeduplicated, 1);
     EXPECT_EQ(rNoDedup.streamsDeduplicated, 0);
+
+    auto countImageStreams = [](const std::string& path) {
+        QPDF pdf;
+        pdf.processFile(path.c_str());
+        int n = 0;
+        for (auto& obj : pdf.getAllObjects()) {
+            if (!obj.isStream()) continue;
+            QPDFObjectHandle dict = obj.getDict();
+            if (dict.hasKey("/Subtype") && dict.getKey("/Subtype").getName() == "/Image") {
+                ++n;
+            }
+        }
+        return n;
+    };
+
+    EXPECT_EQ(countImageStreams(outDefault), 1);  // duplicate pair shares one object
+    EXPECT_EQ(countImageStreams(outNoDedup), 2);  // both distinct streams remain
+
+    for (const auto& out : {outDefault, outNoDedup}) {
+        EXPECT_GT(std::filesystem::file_size(out), 0u) << out;
+        EXPECT_NO_THROW(QPDF().processFile(out.c_str())) << out;
+    }
+}
+
+// P2-T10-T01 (ESC-015): two byte-identical image streams that differ only by
+// carrying an /SMask must never merge - merging would repoint referrers and
+// silently change transparency (AC-C2).
+TEST(StructureWriter, MaskedStreamsNotDeduplicated) {
+    TestCorpusGenerator generator;
+    std::string input = generator.generateMaskedDuplicateStreams();
+
+    OptimizationOptions withDefaults;  // deduplicateStreams=true
+    std::string outDefault = input + ".masked_default.pdf";
+
+    PDFOptimizer optimizer;
+    auto rDefault = optimizer.optimize(input, outDefault, withDefaults);
+    ASSERT_TRUE(rDefault.success) << rDefault.errorMessage;
+
+    // The pair differs only by /SMask, so the added signature key must keep
+    // them distinct: nothing to repoint, no dedup counted.
+    EXPECT_EQ(rDefault.streamsDeduplicated, 0);
+
+    QPDF out;
+    out.processFile(outDefault.c_str());
+
+    std::vector<std::pair<std::string, bool>> images;  // raw bytes, has /SMask
+    for (auto& obj : out.getAllObjects()) {
+        if (!obj.isStream()) continue;
+        QPDFObjectHandle dict = obj.getDict();
+        if (!(dict.hasKey("/Subtype") && dict.getKey("/Subtype").getName() == "/Image")) {
+            continue;
+        }
+        auto raw = obj.getRawStreamData();
+        std::string bytes = raw
+            ? std::string(reinterpret_cast<const char*>(raw->getBuffer()), raw->getSize())
+            : std::string();
+        images.emplace_back(bytes, dict.hasKey("/SMask") || dict.hasKey("/Mask"));
+    }
+
+    // masked image + plain image + soft-mask stream all remain distinct.
+    ASSERT_EQ(images.size(), 3u);
+
+    // Exactly one byte-identical pair survives, and its two members differ on
+    // /SMask - proving the signature key (not image re-encoding) kept them
+    // apart, i.e. this would have merged without the fix.
+    int identicalPairs = 0;
+    for (size_t i = 0; i < images.size(); ++i) {
+        for (size_t j = i + 1; j < images.size(); ++j) {
+            if (!images[i].first.empty() && images[i].first == images[j].first) {
+                ++identicalPairs;
+                EXPECT_NE(images[i].second, images[j].second);
+            }
+        }
+    }
+    EXPECT_EQ(identicalPairs, 1);
+
+    EXPECT_GT(std::filesystem::file_size(outDefault), 0u);
+    EXPECT_NO_THROW(QPDF().processFile(outDefault.c_str()));
 }
 
 // P1-T3-T03: qpdf --check semantics (processFile without warnings/exceptions).

@@ -22,6 +22,7 @@ void printUsage(const char* prog) {
               << "  --linearize                 Enable PDF linearization (Fast Web View)\n"
               << "  --no-flate-recompress       Do not recompress Flate streams at level 9\n"
               << "  --no-dedup                  Do not deduplicate byte-identical streams\n"
+              << "  --transcode-cmyk-to-rgb     Opt-in: transcode DeviceCMYK images to DeviceRGB (default: preserve CMYK)\n"
               << "  -h, --help                  Show this help message\n";
 }
 
@@ -105,6 +106,8 @@ int main(int argc, char* argv[]) {
             opts.recompressFlate = false;
         } else if (arg == "--no-dedup") {
             opts.deduplicateStreams = false;
+        } else if (arg == "--transcode-cmyk-to-rgb") {
+            opts.transcodeCmykToRgb = true;
         } else if (arg[0] == '-') {
             std::cerr << "Unknown option: " << arg << "\n";
             return 1;
@@ -149,6 +152,12 @@ int main(int argc, char* argv[]) {
             std::cout << "  Image Bytes Saved:   " << result.imageBytesSaved << " bytes\n";
         }
         std::cout << "  Streams Deduplicated: " << result.streamsDeduplicated << "\n";
+        if (result.cmykPreserved > 0) {
+            std::cout << "  CMYK Preserved:      " << result.cmykPreserved << "\n";
+        }
+        if (result.transcodedCmyk > 0) {
+            std::cout << "  CMYK Transcoded:     " << result.transcodedCmyk << "\n";
+        }
         std::cout << "  Stripped Items:\n";
         std::cout << "    - Links:           " << result.linksRemoved << "\n";
         std::cout << "    - Other Annots:    " << result.annotationsRemoved << "\n";

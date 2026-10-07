@@ -53,7 +53,9 @@ set(CORE_SOURCES
     src/core/PDFInspector.cpp
     src/core/ImageAnalyzer.cpp
     src/core/DecisionEngine.cpp
+    src/core/CmykHandler.cpp
     src/core/PDFOptimizer.cpp
+    src/core/ReferenceRewriter.cpp
     src/codecs/JpegCodec.cpp
     src/codecs/PngCodec.cpp
     src/codecs/Jp2Codec.cpp

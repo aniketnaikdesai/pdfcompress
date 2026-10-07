@@ -94,6 +94,10 @@ int main(int argc, char *argv[]) {
     auto *stripDestsCheck = new QCheckBox("Strip Named Destinations", controlsGroup);
     auto *stripMetadataCheck = new QCheckBox("Strip Metadata (/Info, XMP)", controlsGroup);
     auto *linearizeCheck = new QCheckBox("Linearize (Fast Web View)", controlsGroup);
+    auto *transcodeCmykCheck = new QCheckBox("Transcode CMYK to RGB", controlsGroup);
+    transcodeCmykCheck->setToolTip(
+        "Opt-in: convert DeviceCMYK / ICCBased-CMYK images to DeviceRGB.\n"
+        "Default off preserves CMYK color exactly.");
 
     optionsLayout->addWidget(stripMetadataCheck, 0, 0);
     optionsLayout->addWidget(stripJsCheck, 0, 1);
@@ -103,6 +107,7 @@ int main(int argc, char *argv[]) {
     optionsLayout->addWidget(stripAnnotsCheck, 1, 1);
     optionsLayout->addWidget(stripDestsCheck, 1, 2);
     optionsLayout->addWidget(linearizeCheck, 1, 3);
+    optionsLayout->addWidget(transcodeCmykCheck, 2, 0);
     controlsLayout->addLayout(optionsLayout);
 
     layout->addWidget(controlsGroup);
@@ -118,6 +123,7 @@ int main(int argc, char *argv[]) {
         stripDestsCheck->setChecked(opts.stripNamedDestinations);
         stripMetadataCheck->setChecked(opts.stripMetadata);
         linearizeCheck->setChecked(opts.linearize);
+        transcodeCmykCheck->setChecked(opts.transcodeCmykToRgb);
     };
 
     // Initialize defaults to Balanced
@@ -223,6 +229,7 @@ int main(int argc, char *argv[]) {
         opts.stripNamedDestinations = stripDestsCheck->isChecked();
         opts.stripMetadata = stripMetadataCheck->isChecked();
         opts.linearize = linearizeCheck->isChecked();
+        opts.transcodeCmykToRgb = transcodeCmykCheck->isChecked();
         opts.recompressFlate = true;
         opts.deduplicateStreams = true;
 

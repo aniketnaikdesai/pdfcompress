@@ -1,155 +1,173 @@
 {
-  "phase": "Phase 1 (Goal B) \u2014 Structure & Profile-Defaults Verify-and-Complete",
+  "phase": "Phase 2 (Goal C) - Codec-Selection Correctness",
   "max_parallel_tasks": 4,
   "status": "READY_FOR_BUILD",
   "tasks": [
     {
-      "id": "P1-T1",
-      "title": "Profile-defaults verifier tests (AC-B1)",
-      "description": "Create tests/test_profile_defaults.cpp with three TEST(ProfileDefaults,...) cases that pin OptimizationOptions::forProfile defaults exactly (7 strip booleans + linearize + recompressFlate + deduplicateStreams per profile). Pure verification: no product-code change.",
+      "id": "P2-T1",
+      "title": "DecisionEngine routing: slider scoped to lossy classes + PNG/alpha branch (AC-C1, AC-C2 routing)",
+      "description": "Rework DecisionEngine's classification-to-codec switch so the quality slider affects only Photo/Screenshot/LineArt, Monochrome and ScannedText ignore it, and the PNG codec is selected for alpha images and for Screenshot/LineArt under MaxQuality with no slider. Extend CompressionParams (and the compress call, via defaults/overload) with hasAlpha/bitsPerComponent/colorSpace so PDFOptimizer can drive the lossless branch without breaking existing callers.",
       "agent": "build_worker",
       "task_type": "code",
       "dependencies": [],
       "acceptance_criteria": [
-        "Given OptimizationOptions::forProfile(MaxQuality) as on master, when TEST(ProfileDefaults, MaxQualityStripsNothing) runs, then all 7 strip booleans are false and linearize=false, recompressFlate=true, deduplicateStreams=true.",
-        "Given OptimizationOptions::forProfile(Balanced) as on master, when TEST(ProfileDefaults, BalancedStripsJsAndMetadataOnly) runs, then only stripJavaScript and stripMetadata are true (other 5 strip booleans false) and linearize=false, recompressFlate=true, deduplicateStreams=true.",
-        "Given OptimizationOptions::forProfile(MaxCompression) as on master, when TEST(ProfileDefaults, MaxCompressionStripsEverything) runs, then all 7 strip booleans are true and linearize=false, recompressFlate=true, deduplicateStreams=true."
+        "Given one image of each classification (Photo, Screenshot, LineArt, ScannedText, Monochrome), when DecisionEngine::compress is called with qualityHint=70 and again with qualityHint=0 under the same profile, then the output StreamFilter is unchanged between the two calls for ScannedText (JPXDecode) and Monochrome (FlateDecode), while Photo, Screenshot and LineArt select the lossy DCTDecode path when the slider is active (qualityHint=70).",
+        "Given hasAlpha=true (an image carrying /SMask or /Mask), when DecisionEngine::compress runs, then the PNG codec (m_pngCodec) is selected and the reported StreamFilter is FlateDecode, so JPEG-with-alpha flattening no longer occurs on this path.",
+        "Given Screenshot or LineArt under MaxQuality with no slider (qualityHint<=0), when DecisionEngine::compress runs, then the lossless PNG path (m_pngCodec, StreamFilter FlateDecode) is selected instead of JPEG, and existing Photo/Monochrome/ScannedText behavior is preserved (existing DecisionEngine tests still pass)."
       ],
       "tests": [
         {
-          "test_id": "P1-T1-T01",
-          "linked_acceptance_criterion": "Given OptimizationOptions::forProfile(MaxQuality) as on master, when TEST(ProfileDefaults, MaxQualityStripsNothing) runs, then all 7 strip booleans are false and linearize=false, recompressFlate=true, deduplicateStreams=true.",
+          "test_id": "P2-T1-T01",
+          "linked_acceptance_criterion": "Given one image of each classification (Photo, Screenshot, LineArt, ScannedText, Monochrome), when DecisionEngine::compress is called with qualityHint=70 and again with qualityHint=0 under the same profile, then the output StreamFilter is unchanged between the two calls for ScannedText (JPXDecode) and Monochrome (FlateDecode), while Photo, Screenshot and LineArt select the lossy DCTDecode path when the slider is active (qualityHint=70).",
           "type": "unit",
-          "description": "Build forProfile(MaxQuality) and EXPECT_FALSE each strip boolean, EXPECT_FALSE linearize, EXPECT_TRUE recompressFlate and deduplicateStreams.",
-          "expected_result": "TEST(ProfileDefaults, MaxQualityStripsNothing) passes."
+          "description": "TEST(DecisionEngine, SliderOnlyAffectsLossyClasses): for each classification, call compress twice (qualityHint 70 vs 0) and assert ScannedText==JPXDecode both, Monochrome==FlateDecode both, and Photo/Screenshot/LineArt==DCTDecode with the slider active.",
+          "expected_result": "TEST(DecisionEngine, SliderOnlyAffectsLossyClasses) passes; slider never changes the filter for ScannedText/Monochrome."
         },
         {
-          "test_id": "P1-T1-T02",
-          "linked_acceptance_criterion": "Given OptimizationOptions::forProfile(Balanced) as on master, when TEST(ProfileDefaults, BalancedStripsJsAndMetadataOnly) runs, then only stripJavaScript and stripMetadata are true (other 5 strip booleans false) and linearize=false, recompressFlate=true, deduplicateStreams=true.",
+          "test_id": "P2-T1-T02",
+          "linked_acceptance_criterion": "Given hasAlpha=true (an image carrying /SMask or /Mask), when DecisionEngine::compress runs, then the PNG codec (m_pngCodec) is selected and the reported StreamFilter is FlateDecode, so JPEG-with-alpha flattening no longer occurs on this path.",
           "type": "unit",
-          "description": "Build forProfile(Balanced) and EXPECT_TRUE stripJavaScript/stripMetadata, EXPECT_FALSE the other 5 strip booleans and linearize, EXPECT_TRUE recompressFlate/deduplicateStreams.",
-          "expected_result": "TEST(ProfileDefaults, BalancedStripsJsAndMetadataOnly) passes."
+          "description": "TEST(DecisionEngine, PngSelectedForAlpha): call compress with hasAlpha=true and assert outFilter==FlateDecode and the returned bytes are non-empty (m_pngCodec path reachable).",
+          "expected_result": "Alpha selects the PNG/FlateDecode path; m_pngCodec is reachable by a TEST(DecisionEngine, ...)."
         },
         {
-          "test_id": "P1-T1-T03",
-          "linked_acceptance_criterion": "Given OptimizationOptions::forProfile(MaxCompression) as on master, when TEST(ProfileDefaults, MaxCompressionStripsEverything) runs, then all 7 strip booleans are true and linearize=false, recompressFlate=true, deduplicateStreams=true.",
+          "test_id": "P2-T1-T03",
+          "linked_acceptance_criterion": "Given Screenshot or LineArt under MaxQuality with no slider (qualityHint<=0), when DecisionEngine::compress runs, then the lossless PNG path (m_pngCodec, StreamFilter FlateDecode) is selected instead of JPEG, and existing Photo/Monochrome/ScannedText behavior is preserved (existing DecisionEngine tests still pass).",
           "type": "unit",
-          "description": "Build forProfile(MaxCompression) and EXPECT_TRUE all 7 strip booleans, EXPECT_FALSE linearize, EXPECT_TRUE recompressFlate/deduplicateStreams.",
-          "expected_result": "TEST(ProfileDefaults, MaxCompressionStripsEverything) passes."
+          "description": "TEST(DecisionEngine, MaxQualityLosslessUsesPng): Screenshot/LineArt with MaxQuality + qualityHint=0 -> FlateDecode; with qualityHint=70 -> DCTDecode. Existing DecisionEngine tests re-run green.",
+          "expected_result": "MaxQuality no-slider screenshots/line-art route to the PNG/FlateDecode lossless path."
         }
       ],
       "expected_artifacts": [
-        "tests/test_profile_defaults.cpp"
+        "src/core/DecisionEngine.cpp (routing rework)",
+        "src/core/DecisionEngine.h (compress params)",
+        "src/codecs/CodecInterface.h (CompressionParams alpha/color hints)",
+        "src/codecs/PngCodec.cpp (lossless output embeddable as FlateDecode if adaptation needed)",
+        "tests/test_decision_engine.cpp (3 new TEST cases)"
       ],
       "touches_files": [
-        "tests/test_profile_defaults.cpp"
+        "src/core/DecisionEngine.h",
+        "src/core/DecisionEngine.cpp",
+        "src/codecs/CodecInterface.h",
+        "src/codecs/PngCodec.cpp",
+        "tests/test_decision_engine.cpp"
       ],
       "inputs": [
-        "src/core/PDFOptimizer.h forProfile defaults"
+        "src/core/DecisionEngine.cpp switch (1-89)",
+        "src/codecs/CodecInterface.h CompressionParams"
       ],
       "outputs": [
-        "tests/test_profile_defaults.cpp with 3 TEST cases"
+        "DecisionEngine routing honoring AC-C1/AC-C2",
+        "3 new DecisionEngine unit tests"
       ],
       "status": "done",
-      "size": "S",
+      "size": "M",
       "context": {
         "read_files": [
           {
-            "path": "src/core/PDFOptimizer.h",
-            "lines": "9-65",
-            "why": "forProfile defaults under test; do not modify"
+            "path": "src/core/DecisionEngine.cpp",
+            "lines": "1-89",
+            "why": "classification-to-codec switch being reworked"
           },
           {
-            "path": "tests/test_pdf_optimizer.cpp",
-            "lines": "1-58",
-            "why": "GTest conventions and corpus-generator usage in this repo"
+            "path": "src/core/DecisionEngine.h",
+            "lines": "1-40",
+            "why": "compress() signature and codec members"
           },
           {
-            "path": "CMakeLists.txt",
-            "lines": "150-157",
-            "why": "see pdfcompress_tests wiring (P1-T4 owns the edit)"
+            "path": "src/codecs/CodecInterface.h",
+            "lines": "1-44",
+            "why": "CompressionParams to extend with alpha/color hints"
+          },
+          {
+            "path": "src/codecs/PngCodec.cpp",
+            "lines": "1-99",
+            "why": "PNG codec output contract; must be embeddable as a FlateDecode image stream"
+          },
+          {
+            "path": "src/core/ImageMetadata.h",
+            "lines": "31-39",
+            "why": "ImageClassification enum values"
+          },
+          {
+            "path": "tests/test_decision_engine.cpp",
+            "lines": "1-25",
+            "why": "existing DecisionEngine tests to extend"
           }
         ],
         "contracts": [
-          "static OptimizationOptions forProfile(CompressionProfile prof)  [existing, do not change signature or defaults]",
-          "bool stripLinks, stripOtherAnnotations, stripBookmarks, stripForms, stripJavaScript, stripNamedDestinations, stripMetadata; bool linearize=false; bool recompressFlate=true; bool deduplicateStreams=true  [existing]"
+          "std::vector<uint8_t> DecisionEngine::compress(const uint8_t* pixels, int width, int height, int channels, const AnalysisResult& analysis, StreamFilter& outFilter, int qualityHint = 0)  [existing; extend with defaulted hasAlpha/bitsPerComponent/colorSpace (or an overload) so existing callers still compile]",
+          "struct CompressionParams { int width; int height; int channels; CompressionProfile profile; int qualityHint; }  [existing; add hasAlpha/bitsPerComponent/colorSpace]",
+          "PngCodec::encode(pixels, params) -> bytes  [existing]; AC-C2 requires the selected lossless output to be embeddable as a PDF /FlateDecode image stream (never DCTDecode)",
+          "Slider rule [new]: qualityHint>0 affects only Photo/Screenshot/LineArt; ScannedText -> JPXDecode and Monochrome -> FlateDecode ignore it"
         ],
-        "architecture_excerpt": "| `OptimizationOptions::forProfile` + strip/writer paths | [existing] | Normative defaults locked by tests in Ph.1; extended with new fields only (`targetDPI`, transcode/JBIG2/subset/password flags) \u2014 no semantic change to strip logic |",
-        "plan_excerpt": "- **Scope:** New `tests/test_profile_defaults.cpp` (`TEST(ProfileDefaults,\u2026)` \u00d73 + CLI round-trip for `--strip-*/--no-strip-*`, `--linearize/--no-flate-recompress/--no-dedup`); `/AA` + non-JS `/OpenAction` handling completion; `--linearize` USAGE.md gap; no `DecisionEngine`/codec/DPI change.",
+        "architecture_excerpt": "| DecisionEngine routing | [new/changed] | Slider scoped to lossy classes; PNG branch for alpha + MaxQuality lossless; 1-bit->JBIG2 branch; CMYK preserve/transcode branch; each branch pinned by `TEST(DecisionEngine,...)` |",
+        "plan_excerpt": "- **Scope:** `DecisionEngine.cpp` branch rework (lossy-only slider; PNG branch; ScannedText profile-driven, Monochrome always lossless); new `CmykHandler` ...",
         "requirement_ids": [
-          "AC-B1",
+          "AC-C1",
+          "AC-C2",
           "S1",
-          "S9"
+          "S7"
         ],
-        "test_command": "ctest --test-dir build -R ProfileDefaults --output-on-failure",
+        "test_command": "ctest --test-dir build -R DecisionEngine --output-on-failure",
         "memory_notes": [],
+        "graph_excerpt": "graphify query (404 nodes; start PngCodec, PDFOptimizer, DecisionEngine, Jp2Codec.cpp, CmykSkipped, CodecInterface.h, deduplicateStreams; 139 nodes). PngCodec [src/codecs/PngCodec.h L8, community PNG Codec]; DecisionEngine [src/core/DecisionEngine.h L12]; CompressionParams [src/codecs/CodecInterface.h L18]; ImageCodec [CodecInterface.h L29].",
         "needs_graphify": false,
-        "size": "S"
+        "size": "M"
       }
     },
     {
-      "id": "P1-T2",
-      "title": "Stripping end-to-end verifier tests incl. GoTo survival (AC-B2 + CLI round-trip)",
-      "description": "Create tests/test_stripping_profiles.cpp that optimizes the four stripping corpus PDFs under each profile via the optimizer API and asserts the per-profile removal matrix, non-JS /OpenAction GoTo survival, /AA removal under JS-strip, and explicit CLI-flag-wins round-trip. Verification only: if any test exposes a strip-logic gap, record it and stop, do not change strip semantics.",
+      "id": "P2-T2",
+      "title": "Alpha/Mask detection + PNG integration in PDFOptimizer (AC-C2)",
+      "description": "In PDFOptimizer's per-image loop, detect /SMask or /Mask on the image dictionary, set hasAlpha and pass it (with colorSpace/bitsPerComponent) into the DecisionEngine call so alpha images take the lossless PNG/FlateDecode path instead of JPEG. Preserve the mask streams; never flatten alpha.",
       "agent": "build_worker",
       "task_type": "code",
-      "dependencies": [],
+      "dependencies": [
+        "P2-T1"
+      ],
       "acceptance_criteria": [
-        "Given the four stripping corpus PDFs (with_form, with_bookmarks_and_links, with_javascript, with_metadata) with real dict keys, when optimized with forProfile(MaxQuality), then 0 items are removed on all four (all *Removed counts 0, metadataStripped false).",
-        "Given the same four PDFs, when optimized with forProfile(Balanced), then jsRemoved>=1 on with_javascript.pdf and metadataStripped==true on with_metadata.pdf and nothing else, where \"nothing else\" scopes to the six removal counters only (linksRemoved/annotationsRemoved/bookmarksRemoved/formsRemoved/jsRemoved-on-non-JS-files/namedDestinationsRemoved ==0 on files lacking those elements); metadataStripped is NOT asserted on metadata-free PDFs (Balanced applies stripMetadata=true, which reports true on all inputs per the ESC-008 intent ruling locked 2026-10-07).",
-        "Given the same four PDFs, when optimized with forProfile(MaxCompression), then >=1 item is removed on each of the four PDFs.",
-        "Given a PDF whose /OpenAction is a non-JS GoTo destination (staged in $TMPDIR, never committed), when optimized under every profile, then the GoTo /OpenAction survives in the output; and given /AA keys present, when optimized with stripJavaScript=true, then /AA is removed with jsRemoved>=1.",
-        "Given --profile balanced plus an explicit --strip-bookmarks override round-tripped through run_optimize CLI parsing semantics (forProfile then explicit flag wins), when optimized, then bookmarks are removed and the result breakdown logs the removal (explicit flag wins over profile default)."
+        "Given transparency.pdf (base image carries /SMask), when optimized with forProfile(MaxQuality) and no quality slider, then the base image output /Filter is FlateDecode (never DCTDecode) and the output passes QPDF().processFile.",
+        "Given an image carrying /SMask or /Mask, when PDFOptimizer runs its per-image path, then the mask stream is preserved (present and intact in the output) and no alpha channel is flattened into JPEG.",
+        "Given the alpha-optimized output, when page 1 is rendered at 150 DPI via the pure-C++ render_diff helper, then SSIM is 1.0 within rounding (lossless path); N/A is allowed only when PDFium is unavailable."
       ],
       "tests": [
         {
-          "test_id": "P1-T2-T01",
-          "linked_acceptance_criterion": "Given the four stripping corpus PDFs (with_form, with_bookmarks_and_links, with_javascript, with_metadata) with real dict keys, when optimized with forProfile(MaxQuality), then 0 items are removed on all four (all *Removed counts 0, metadataStripped false).",
+          "test_id": "P2-T2-T01",
+          "linked_acceptance_criterion": "Given transparency.pdf (base image carries /SMask), when optimized with forProfile(MaxQuality) and no quality slider, then the base image output /Filter is FlateDecode (never DCTDecode) and the output passes QPDF().processFile.",
           "type": "integration",
-          "description": "Optimize each of the four corpus PDFs with forProfile(MaxQuality); assert all removal counters 0 and metadataStripped false; verify outputs pass QPDF().processFile.",
-          "expected_result": "All four MaxQuality runs succeed with zero removals."
+          "description": "Optimize generator.generateTransparency() with MaxQuality; read output image XObject /Filter and assert FlateDecode (not DCTDecode); assert QPDF().processFile succeeds.",
+          "expected_result": "Alpha base image stays lossless (FlateDecode); output is a valid PDF."
         },
         {
-          "test_id": "P1-T2-T02",
-          "linked_acceptance_criterion": "Given the same four PDFs, when optimized with forProfile(Balanced), then jsRemoved>=1 on with_javascript.pdf and metadataStripped==true on with_metadata.pdf and nothing else, where \"nothing else\" scopes to the six removal counters only (linksRemoved/annotationsRemoved/bookmarksRemoved/formsRemoved/jsRemoved-on-non-JS-files/namedDestinationsRemoved ==0 on files lacking those elements); metadataStripped is NOT asserted on metadata-free PDFs (Balanced applies stripMetadata=true, which reports true on all inputs per the ESC-008 intent ruling locked 2026-10-07).",
+          "test_id": "P2-T2-T02",
+          "linked_acceptance_criterion": "Given an image carrying /SMask or /Mask, when PDFOptimizer runs its per-image path, then the mask stream is preserved (present and intact in the output) and no alpha channel is flattened into JPEG.",
           "type": "integration",
-          "description": "Optimize each of the four corpus PDFs with forProfile(Balanced); assert jsRemoved>=1 on with_javascript.pdf, EXPECT_TRUE(metadataStripped) on with_metadata.pdf, and zero in the six removal counters on files lacking those elements; do NOT assert metadataStripped on metadata-free PDFs (intent semantics report true there too \u2014 left unasserted per ESC-008).",
-          "expected_result": "Balanced strips JS (jsRemoved>=1) and applies metadata-strip (true on with_metadata.pdf); the six removal counters are 0 elsewhere."
+          "description": "Optimize transparency.pdf; assert the output image dict still has /SMask and the referenced mask stream is present with non-zero data.",
+          "expected_result": "/SMask preserved; no alpha flattened."
         },
         {
-          "test_id": "P1-T2-T03",
-          "linked_acceptance_criterion": "Given the same four PDFs, when optimized with forProfile(MaxCompression), then >=1 item is removed on each of the four PDFs.",
-          "type": "integration",
-          "description": "Optimize each of the four corpus PDFs with forProfile(MaxCompression); assert total removals >=1 per file.",
-          "expected_result": "MaxCompression removes >=1 item on each of the four PDFs."
-        },
-        {
-          "test_id": "P1-T2-T04",
-          "linked_acceptance_criterion": "Given a PDF whose /OpenAction is a non-JS GoTo destination (staged in $TMPDIR, never committed), when optimized under every profile, then the GoTo /OpenAction survives in the output; and given /AA keys present, when optimized with stripJavaScript=true, then /AA is removed with jsRemoved>=1.",
-          "type": "integration",
-          "description": "Stage a $TMPDIR PDF with non-JS GoTo /OpenAction plus /AA keys; optimize under all three profiles; assert GoTo /OpenAction present in every output and /AA removed exactly when stripJavaScript=true.",
-          "expected_result": "GoTo survives all profiles; /AA removed only under JS-strip."
-        },
-        {
-          "test_id": "P1-T2-T05",
-          "linked_acceptance_criterion": "Given --profile balanced plus an explicit --strip-bookmarks override round-tripped through run_optimize CLI parsing semantics (forProfile then explicit flag wins), when optimized, then bookmarks are removed and the result breakdown logs the removal (explicit flag wins over profile default).",
-          "type": "integration",
-          "description": "Start from forProfile(Balanced), set stripBookmarks=true (mirroring run_optimize --strip-bookmarks parsing), optimize with_bookmarks_and_links.pdf, assert bookmarksRemoved>=1 and /Outlines absent in output.",
-          "expected_result": "Explicit flag overrides profile default; removal logged."
+          "test_id": "P2-T2-T03",
+          "linked_acceptance_criterion": "Given the alpha-optimized output, when page 1 is rendered at 150 DPI via the pure-C++ render_diff helper, then SSIM is 1.0 within rounding (lossless path); N/A is allowed only when PDFium is unavailable.",
+          "type": "manual",
+          "description": "Run ./build/render_diff transparency.pdf transparency_optimized.pdf and read SSIM/PSNR; confirm SSIM 1.0 or N/A with PDFium-unavailable note.",
+          "expected_result": "SSIM 1.0 (lossless alpha round-trip) or documented N/A."
         }
       ],
       "expected_artifacts": [
-        "tests/test_stripping_profiles.cpp"
+        "src/core/PDFOptimizer.cpp (alpha/Mask detection + DecisionEngine plumbing)",
+        "tests/test_pdf_optimizer.cpp (alpha integration tests)"
       ],
       "touches_files": [
-        "tests/test_stripping_profiles.cpp"
+        "src/core/PDFOptimizer.cpp",
+        "tests/test_pdf_optimizer.cpp"
       ],
       "inputs": [
-        "src/core/PDFOptimizer.h/.cpp strip branches",
-        "tests/test_corpus_generator.h corpus builders"
+        "DecisionEngine alpha/PNG contract from P2-T1",
+        "tests/test_corpus_generator.cpp generateTransparency() fixture"
       ],
       "outputs": [
-        "tests/test_stripping_profiles.cpp with 5 TEST cases"
+        "Alpha images routed to lossless FlateDecode/PNG",
+        "Alpha integration tests"
       ],
       "status": "done",
       "size": "M",
@@ -157,98 +175,111 @@
         "read_files": [
           {
             "path": "src/core/PDFOptimizer.cpp",
-            "lines": "68-145",
-            "why": "strip branches under verification; read-only, do not change semantics"
+            "lines": "197-318",
+            "why": "per-image loop where alpha/Mask is detected and DecisionEngine is called"
           },
           {
-            "path": "src/core/PDFOptimizer.h",
-            "lines": "67-92",
-            "why": "OptimizationResult counters asserted by tests"
+            "path": "src/core/DecisionEngine.h",
+            "lines": "12-38",
+            "why": "compress() contract extended by P2-T1"
           },
           {
-            "path": "tests/test_corpus_generator.h",
-            "lines": "1-60",
-            "why": "corpus builder API for with_form/bookmarks/javascript/metadata"
+            "path": "src/core/ImageMetadata.h",
+            "lines": "42-62",
+            "why": "ImageMetadata.hasAlpha field"
           },
           {
             "path": "tests/test_pdf_optimizer.cpp",
-            "lines": "20-47",
-            "why": "existing strip-test pattern with explicit options"
+            "lines": "1-58",
+            "why": "optimizer test pattern and corpus usage"
           },
           {
-            "path": "tools/run_optimize.cpp",
-            "lines": "60-107",
-            "why": "CLI flag-overrides-profile parsing semantics for T05"
+            "path": "tests/test_corpus_generator.cpp",
+            "lines": "260-330",
+            "why": "generateTransparency() SMask fixture"
+          },
+          {
+            "path": "tools/render_diff.cpp",
+            "lines": "1-40",
+            "why": "render_diff CLI used for the SSIM gate"
           }
         ],
         "contracts": [
           "OptimizationResult optimize(const std::string& inputPath, const std::string& outputPath, const OptimizationOptions& options)  [existing]",
-          "if (oa.isDictionary() && oa.hasKey(\"/S\") && oa.getKey(\"/S\").getName() == \"/JavaScript\")  [existing GoTo-preserving guard, PDFOptimizer.cpp:94]",
-          "result.metadataStripped==true iff options.stripMetadata==true (intent, NOT actual-removal)  [existing, PDFOptimizer.cpp:119-125; ESC-008 ruling locked 2026-10-07 \u2014 do NOT EXPECT_FALSE on metadata-free PDFs]"
+          "imageObj.getDict().hasKey(\"/SMask\") || hasKey(\"/Mask\") -> meta.hasAlpha=true  [new detection in PDFOptimizer per-image loop]",
+          "DecisionEngine::compress(..., hasAlpha, ...) selects PngCodec and reports StreamFilter::FlateDecode for alpha  [from P2-T1]",
+          "Output /Filter for alpha images is FlateDecode; /SMask stream preserved; never DCTDecode  [AC-C2]"
         ],
-        "architecture_excerpt": "| `OptimizationOptions::forProfile` + strip/writer paths | [existing] | Normative defaults locked by tests in Ph.1; extended with new fields only (`targetDPI`, transcode/JBIG2/subset/password flags) \u2014 no semantic change to strip logic |",
-        "plan_excerpt": "- **Goal:** Lock existing `forProfile` defaults and writer behavior with verifier tests; close doc gaps only. No strip-semantics change (locked: MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, `linearize=false`).",
+        "architecture_excerpt": "| DecisionEngine routing | [new/changed] | Slider scoped to lossy classes; PNG branch for alpha + MaxQuality lossless; ... each branch pinned by `TEST(DecisionEngine,...)` |",
+        "plan_excerpt": "- **Scope:** `DecisionEngine.cpp` branch rework (lossy-only slider; PNG branch; ScannedText profile-driven, Monochrome always lossless); ...",
         "requirement_ids": [
-          "AC-B2",
-          "J-B1",
-          "J-B2",
-          "S1",
+          "AC-C2",
+          "J-C1",
           "S2",
-          "S4"
+          "S3"
         ],
-        "test_command": "ctest --test-dir build -R StrippingProfiles --output-on-failure",
+        "test_command": "ctest --test-dir build -R PDFOptimizerTest --output-on-failure",
         "memory_notes": [],
         "needs_graphify": false,
         "size": "M"
       }
     },
     {
-      "id": "P1-T3",
-      "title": "Structural writer-options verifier tests (AC-B3)",
-      "description": "Create tests/test_structure_writer.cpp verifying object-stream/Flate writer behavior: default output <= --no-dedup --no-flate-recompress output, streamsDeduplicated==0 with defaults (verified current-behavior pin: dedup counting is inert under the ESC-001 isIndirect guard and the reference-shared fixture shares one object by reference, so no distinct duplicate pair exists) and ==0 with --no-dedup on the shared-XObject PDF, and qpdf --check clean on both. Verification only, no product-code change.",
+      "id": "P2-T3",
+      "title": "Grayscale detection + efficient-image skip (AC-C1 controls)",
+      "description": "Ensure DeviceGray images are detected and classified correctly (grayscale_scan -> ScannedText grayscale document; monochrome_bw -> Monochrome) so the slider is ignored for them, and skip re-encoding images whose /BitsPerComponent is not 8 (bit-packed data) by keeping the original with a logged reason instead of mis-decoding it.",
       "agent": "build_worker",
       "task_type": "code",
-      "dependencies": [],
+      "dependencies": [
+        "P2-T2"
+      ],
       "acceptance_criteria": [
-        "Given photo_heavy.pdf (multi-image), when optimized with defaults (deduplicateStreams=true, recompressFlate=true) vs with both disabled, then the default output size is <= the no-opt output size.",
-        "Given the transparency/shared-XObject dedup PDF, when optimized with defaults (deduplicateStreams=true) and with --no-dedup semantics (deduplicateStreams=false), then streamsDeduplicated==0 in both runs (verified current-behavior pin: dedup counting is inert under the ESC-001 isIndirect guard, and the reference-shared corpus fixture shares one indirect object by reference so no distinct duplicate pair exists); the aspirational streamsDeduplicated>=1 assertion is deferred to a follow-up phase requiring a product dedup fix plus a distinct-duplicate corpus fixture.",
-        "Given both outputs from the comparisons above, when checked with qpdf --check semantics (QPDF::processFile without warnings), then both are clean valid PDFs."
+        "Given grayscale_scan.pdf (DeviceGray, 300x400), when optimized with forProfile(MaxQuality) with qualityHint=70 and again without a quality hint, then it is classified ScannedText (grayscale document) and the chosen codec/filter is the same in both runs (slider ignored).",
+        "Given monochrome_bw.pdf (DeviceGray, few unique colors), when optimized with and without a quality hint, then it is classified Monochrome and routes to FlateDecode in both runs (slider ignored).",
+        "Given an image whose /BitsPerComponent is not 8 (bit-packed, e.g. /BitsPerComponent 1), when optimized, then it is not re-encoded (kept original with a logged reason) and the output is a valid PDF with no corruption."
       ],
       "tests": [
         {
-          "test_id": "P1-T3-T01",
-          "linked_acceptance_criterion": "Given photo_heavy.pdf (multi-image), when optimized with defaults (deduplicateStreams=true, recompressFlate=true) vs with both disabled, then the default output size is <= the no-opt output size.",
+          "test_id": "P2-T3-T01",
+          "linked_acceptance_criterion": "Given grayscale_scan.pdf (DeviceGray, 300x400), when optimized with forProfile(MaxQuality) with qualityHint=70 and again without a quality hint, then it is classified ScannedText (grayscale document) and the chosen codec/filter is the same in both runs (slider ignored).",
           "type": "integration",
-          "description": "Optimize photo_heavy.pdf twice (defaults vs deduplicateStreams=false + recompressFlate=false); compare optimizedSizeBytes.",
-          "expected_result": "Default output size <= no-opt output size."
+          "description": "TEST(ImageAnalyzer, GrayscaleDeviceImageClassifiedAsScannedText) on a DeviceGray buffer, plus optimize grayscale_scan.pdf twice (qualityHint 70 vs 0) and assert the output filter matches across runs.",
+          "expected_result": "DeviceGray grayscale image -> ScannedText; slider does not change grayscale_scan's codec/filter."
         },
         {
-          "test_id": "P1-T3-T02",
-          "linked_acceptance_criterion": "Given the transparency/shared-XObject dedup PDF, when optimized with defaults (deduplicateStreams=true) and with --no-dedup semantics (deduplicateStreams=false), then streamsDeduplicated==0 in both runs (verified current-behavior pin: dedup counting is inert under the ESC-001 isIndirect guard, and the reference-shared corpus fixture shares one indirect object by reference so no distinct duplicate pair exists); the aspirational streamsDeduplicated>=1 assertion is deferred to a follow-up phase requiring a product dedup fix plus a distinct-duplicate corpus fixture.",
+          "test_id": "P2-T3-T02",
+          "linked_acceptance_criterion": "Given monochrome_bw.pdf (DeviceGray, few unique colors), when optimized with and without a quality hint, then it is classified Monochrome and routes to FlateDecode in both runs (slider ignored).",
           "type": "integration",
-          "description": "Optimize the shared-XObject corpus PDF with defaults and with deduplicateStreams=false; assert streamsDeduplicated==0 in both runs (current-behavior pin).",
-          "expected_result": "Dedup counter pinned at 0 in both runs (current behavior); --no-dedup also 0."
+          "description": "Optimize monochrome_bw.pdf twice (qualityHint 70 vs 0); assert classification Monochrome and FlateDecode in both, valid output.",
+          "expected_result": "monochrome_bw stays FlateDecode regardless of slider."
         },
         {
-          "test_id": "P1-T3-T03",
-          "linked_acceptance_criterion": "Given both outputs from the comparisons above, when checked with qpdf --check semantics (QPDF::processFile without warnings), then both are clean valid PDFs.",
+          "test_id": "P2-T3-T03",
+          "linked_acceptance_criterion": "Given an image whose /BitsPerComponent is not 8 (bit-packed, e.g. /BitsPerComponent 1), when optimized, then it is not re-encoded (kept original with a logged reason) and the output is a valid PDF with no corruption.",
           "type": "integration",
-          "description": "Run QPDF().processFile on both T01/T02 outputs; assert no exception.",
-          "expected_result": "All outputs are valid PDFs."
+          "description": "Stage a $TMPDIR PDF with a /BitsPerComponent 1 DeviceGray image (never committed); optimize; assert imagesKeptOriginal>=1 (or imagesSkipped>=1 with logged reason), stream unchanged, QPDF().processFile clean.",
+          "expected_result": "Bit-packed image preserved, not corrupted."
         }
       ],
       "expected_artifacts": [
-        "tests/test_structure_writer.cpp"
+        "src/core/ImageAnalyzer.cpp (DeviceGray classification rule)",
+        "src/core/PDFOptimizer.cpp (bitsPerComponent skip-with-reason)",
+        "tests/test_image_analyzer.cpp (grayscale classification test)",
+        "tests/test_pdf_optimizer.cpp (grayscale/skip integration tests)"
       ],
       "touches_files": [
-        "tests/test_structure_writer.cpp"
+        "src/core/PDFOptimizer.cpp",
+        "src/core/ImageAnalyzer.cpp",
+        "tests/test_image_analyzer.cpp",
+        "tests/test_pdf_optimizer.cpp"
       ],
       "inputs": [
-        "src/core/PDFOptimizer.cpp dedup+writer sections",
-        "tests/test_corpus_generator.h photo_heavy + transparency builders"
+        "ImageAnalyzer::classify rules",
+        "corpus grayscale_scan/monochrome_bw fixtures"
       ],
       "outputs": [
-        "tests/test_structure_writer.cpp with 3 TEST cases"
+        "Correct DeviceGray classification and slider-invariance",
+        "Efficient-image skip with logged reason"
       ],
       "status": "done",
       "size": "M",
@@ -256,173 +287,495 @@
         "read_files": [
           {
             "path": "src/core/PDFOptimizer.cpp",
-            "lines": "334-398",
-            "why": "dedup + QPDFWriter options under verification; read-only"
+            "lines": "226-284",
+            "why": "channel/colorSpace detection and per-image DecisionEngine call"
           },
           {
-            "path": "src/core/PDFOptimizer.h",
-            "lines": "67-92",
-            "why": "streamsDeduplicated counter asserted by tests"
+            "path": "src/core/ImageAnalyzer.cpp",
+            "lines": "282-329",
+            "why": "classify() rules; DeviceGray -> ScannedText gap"
           },
           {
-            "path": "tests/test_corpus_generator.h",
-            "lines": "1-60",
-            "why": "photo_heavy and transparency/shared-XObject builders"
+            "path": "src/core/ImageAnalyzer.h",
+            "lines": "11-22",
+            "why": "AnalysisResult fields"
+          },
+          {
+            "path": "tests/test_image_analyzer.cpp",
+            "lines": "1-48",
+            "why": "existing classifier tests"
+          },
+          {
+            "path": "tests/test_corpus_generator.cpp",
+            "lines": "210-236",
+            "why": "generateScreenshotFlat/MonochromeBW/GrayscaleScan fixtures"
           },
           {
             "path": "tests/test_pdf_optimizer.cpp",
             "lines": "1-58",
-            "why": "existing optimizer-test pattern"
+            "why": "optimizer test pattern for grayscale/skip integration tests"
           }
         ],
         "contracts": [
-          "OptimizationResult optimize(const std::string& inputPath, const std::string& outputPath, const OptimizationOptions& options)  [existing]",
-          "writer: setObjectStreamMode(qpdf_o_generate), setRecompressFlate(true) level 9, setDeterministicID(true)  [existing writer contract]",
-          "dedup counting inert in Phase 1: seenStreams handles from getAllObjects() are always indirect so the ESC-001 isIndirect guard skips all, and generateSharedXObject() shares one object by reference [existing verified behavior \u2014 pin at ==0, do NOT fix product code or corpus in Phase 1]"
+          "ImageClassification classify(const AnalysisResult& r, const ImageMetadata& meta)  [existing; DeviceGray (channels==1) non-monochrome must classify as ScannedText]",
+          "OptimizationResult optimize(...)  [existing]",
+          "Monochrome -> FlateDecode; ScannedText -> JPXDecode; the quality slider must not change either  [AC-C1]",
+          "images with /BitsPerComponent != 8 are kept original with a logged reason, never mis-decoded  [S9/AC-C2 safety]"
         ],
-        "architecture_excerpt": "| **PDFOptimizer (QPDF)** | [existing] | Stripping (7 booleans), per-image decode/analyze/decide/encode/size-guard, dedup, writer options. No logic change; `linearize=false`, `recompressFlate` level 9, `deduplicateStreams`, `setDeterministicID` remain. |",
-        "plan_excerpt": "- **Per-phase gates:** Benchmark before/after within \u00b12% every row (no compression change expected); manual PDFs: `with_form`, `with_bookmarks_and_links`, `with_javascript`, `with_metadata`, `transparency`, `text_only` (no-growth control); S1\u2013S9.",
+        "architecture_excerpt": "| `ImageMetadata` | [new/changed] | ... `hasAlpha`, `bitsPerComponent`, `colorSpace` now drive PNG/JBIG2/CMYK branches |",
+        "plan_excerpt": "**Per-phase gates:** ... manual PDFs: `screenshot_flat`, `line_art`, `photo_jpeg`, `transparency` (alpha), `cmyk_image`, `monochrome_bw` + `grayscale_scan` controls ...",
         "requirement_ids": [
+          "AC-C1",
+          "S1",
+          "S9"
+        ],
+        "test_command": "ctest --test-dir build -R ImageAnalyzer --output-on-failure",
+        "memory_notes": [],
+        "needs_graphify": false,
+        "size": "M"
+      }
+    },
+    {
+      "id": "P2-T4",
+      "title": "CMYK preservation with logged reason (AC-C3)",
+      "description": "Replace the silent channels==4 CMYK skip in PDFOptimizer with a correct preservation path: keep the DeviceCMYK (or ICC-based CMYK) image stream intact, never treat it as RGBA, record the preservation in the result, and log a human-readable reason so the skip is no longer silent.",
+      "agent": "build_worker",
+      "task_type": "code",
+      "dependencies": [
+        "P2-T3"
+      ],
+      "acceptance_criteria": [
+        "Given cmyk_image.pdf (DeviceCMYK FlateDecode), when optimized under any profile, then the output passes QPDF().processFile and the image ColorSpace remains DeviceCMYK (or ICC-based CMYK) - never DeviceRGB/RGBA and never corrupted.",
+        "Given cmyk_image.pdf, when optimized, then the result reports the CMYK image as preserved (imagesSkipped==1 and cmykPreserved==1) with a reason logged to stderr, so the skip is no longer silent.",
+        "Given the CMYK preservation path, when a CMYK image is present, then the per-image try/catch keeps the whole file valid and the existing CmykSkipped test (imagesSkipped==1) still passes."
+      ],
+      "tests": [
+        {
+          "test_id": "P2-T4-T01",
+          "linked_acceptance_criterion": "Given cmyk_image.pdf (DeviceCMYK FlateDecode), when optimized under any profile, then the output passes QPDF().processFile and the image ColorSpace remains DeviceCMYK (or ICC-based CMYK) - never DeviceRGB/RGBA and never corrupted.",
+          "type": "integration",
+          "description": "Optimize generator.generateCmykImage() under each profile; assert QPDF().processFile clean and output image ColorSpace is DeviceCMYK/ICCBased-CMYK.",
+          "expected_result": "CMYK ColorSpace preserved; valid output."
+        },
+        {
+          "test_id": "P2-T4-T02",
+          "linked_acceptance_criterion": "Given cmyk_image.pdf, when optimized, then the result reports the CMYK image as preserved (imagesSkipped==1 and cmykPreserved==1) with a reason logged to stderr, so the skip is no longer silent.",
+          "type": "integration",
+          "description": "Optimize cmyk_image.pdf; assert result.imagesSkipped==1 and result.cmykPreserved==1; capture stderr and assert a non-empty preservation reason is logged.",
+          "expected_result": "Preservation recorded and reason logged."
+        },
+        {
+          "test_id": "P2-T4-T03",
+          "linked_acceptance_criterion": "Given the CMYK preservation path, when a CMYK image is present, then the per-image try/catch keeps the whole file valid and the existing CmykSkipped test (imagesSkipped==1) still passes.",
+          "type": "integration",
+          "description": "Re-run TEST(PDFOptimizerTest, CmykSkipped) and assert success==true with imagesSkipped==1 and a valid output file.",
+          "expected_result": "Existing CmykSkipped test passes unchanged."
+        }
+      ],
+      "expected_artifacts": [
+        "src/core/PDFOptimizer.cpp (CMYK preserve + reason)",
+        "src/core/PDFOptimizer.h (cmykPreserved result field)",
+        "tests/test_pdf_optimizer.cpp (CMYK preserve tests)"
+      ],
+      "touches_files": [
+        "src/core/PDFOptimizer.cpp",
+        "src/core/PDFOptimizer.h",
+        "tests/test_pdf_optimizer.cpp"
+      ],
+      "inputs": [
+        "PDFOptimizer.cpp:226-238 CMYK skip branch",
+        "generateCmykImage() fixture"
+      ],
+      "outputs": [
+        "CMYK preservation with logged reason and result counter",
+        "CMYK integration tests"
+      ],
+      "status": "done",
+      "size": "M",
+      "context": {
+        "read_files": [
+          {
+            "path": "src/core/PDFOptimizer.cpp",
+            "lines": "226-238",
+            "why": "channels==4 CMYK skip branch to replace with preserve+reason"
+          },
+          {
+            "path": "src/core/PDFOptimizer.h",
+            "lines": "9-92",
+            "why": "OptimizationOptions/OptimizationResult to extend"
+          },
+          {
+            "path": "tests/test_pdf_optimizer.cpp",
+            "lines": "49-58",
+            "why": "existing CmykSkipped test to keep passing"
+          },
+          {
+            "path": "tests/test_corpus_generator.cpp",
+            "lines": "501-544",
+            "why": "generateCmykImage() DeviceCMYK Flate fixture"
+          },
+          {
+            "path": "tests/test_corpus_verifier.cpp",
+            "lines": "261-311",
+            "why": "existing CMYK verifier/skip expectations"
+          }
+        ],
+        "contracts": [
+          "if (channels == 4) { result.imagesSkipped++; continue; }  [existing PDFOptimizer.cpp:235-238; replace with preserve + logged reason]",
+          "struct OptimizationResult { ... int imagesSkipped; ... }  [existing; add int cmykPreserved=0]",
+          "cmyk_image.pdf output ColorSpace remains DeviceCMYK (or ICC-based CMYK); qpdf --check clean; never RGBA-corrupted  [AC-C3]"
+        ],
+        "architecture_excerpt": "| CmykHandler (preserve path + opt-in transcode path) | [new] | ICC/DeviceCMYK round-trip preservation; `--transcode-cmyk-to-rgb` conversion with internal delta-E sampling, SSIM>=0.98 as normative gate |",
+        "plan_excerpt": "new `CmykHandler` (ICC/DeviceCMYK preserve + Adobe APP14 safety + skip-with-reason logging; opt-in transcode with internal delta-E sampling)",
+        "requirement_ids": [
+          "AC-C3",
+          "J-C2",
+          "S2",
+          "S4"
+        ],
+        "test_command": "ctest --test-dir build -R PDFOptimizerTest --output-on-failure",
+        "memory_notes": [],
+        "needs_graphify": false,
+        "size": "M"
+      }
+    },
+    {
+      "id": "P2-T5",
+      "title": "CMYK->RGB transcode opt-in: CmykHandler, flag, GUI checkbox (AC-C3b)",
+      "description": "Add the opt-in CMYK->RGB transcode path behind --transcode-cmyk-to-rgb (and a GUI checkbox), defaulting to preservation. Introduce a focused CmykHandler component for ICC/DeviceCMYK handling with Adobe APP14 safety and internal delta-E sampling, wire it into PDFOptimizer and the JPEG encoder, and report transcodedCmyk in the result.",
+      "agent": "build_worker",
+      "task_type": "code",
+      "dependencies": [
+        "P2-T4"
+      ],
+      "acceptance_criteria": [
+        "Given cmyk_image.pdf, when optimized with transcodeCmykToRgb=true (CLI --transcode-cmyk-to-rgb), then the output image ColorSpace is DeviceRGB (or ICC-based sRGB), the output passes QPDF().processFile, size gate S2 holds, and result.transcodedCmyk==1.",
+        "Given cmyk_image.pdf, when optimized WITHOUT the flag, then AC-C3 preservation behavior is unchanged (ColorSpace stays CMYK; result.transcodedCmyk==0).",
+        "Given run_optimize, when --help is printed, then it lists --transcode-cmyk-to-rgb; and given the GUI, when the CMYK-transcode checkbox is checked, then transcodeCmykToRgb is set on OptimizationOptions.",
+        "Given the transcoded output, when page 1 is rendered at 150 DPI via render_diff, then SSIM versus the original is >= 0.98 (standing gate S3 color-shift threshold)."
+      ],
+      "tests": [
+        {
+          "test_id": "P2-T5-T01",
+          "linked_acceptance_criterion": "Given cmyk_image.pdf, when optimized with transcodeCmykToRgb=true (CLI --transcode-cmyk-to-rgb), then the output image ColorSpace is DeviceRGB (or ICC-based sRGB), the output passes QPDF().processFile, size gate S2 holds, and result.transcodedCmyk==1.",
+          "type": "integration",
+          "description": "Optimize cmyk_image.pdf with transcodeCmykToRgb=true; assert output ColorSpace is DeviceRGB/ICCBased-RGB, valid PDF, and result.transcodedCmyk==1.",
+          "expected_result": "Transcode opt-in produces RGB output and transcodedCmyk==1."
+        },
+        {
+          "test_id": "P2-T5-T02",
+          "linked_acceptance_criterion": "Given cmyk_image.pdf, when optimized WITHOUT the flag, then AC-C3 preservation behavior is unchanged (ColorSpace stays CMYK; result.transcodedCmyk==0).",
+          "type": "integration",
+          "description": "Optimize cmyk_image.pdf with defaults; assert ColorSpace stays CMYK and result.transcodedCmyk==0.",
+          "expected_result": "Default remains preservation-only."
+        },
+        {
+          "test_id": "P2-T5-T03",
+          "linked_acceptance_criterion": "Given run_optimize, when --help is printed, then it lists --transcode-cmyk-to-rgb; and given the GUI, when the CMYK-transcode checkbox is checked, then transcodeCmykToRgb is set on OptimizationOptions.",
+          "type": "manual",
+          "description": "Inspect run_optimize --help output for --transcode-cmyk-to-rgb and code-inspect main.cpp checkbox -> opts.transcodeCmykToRgb wiring.",
+          "expected_result": "Flag listed by --help; GUI checkbox wired to the option."
+        },
+        {
+          "test_id": "P2-T5-T04",
+          "linked_acceptance_criterion": "Given the transcoded output, when page 1 is rendered at 150 DPI via render_diff, then SSIM versus the original is >= 0.98 (standing gate S3 color-shift threshold).",
+          "type": "manual",
+          "description": "Run ./build/render_diff cmyk_image.pdf cmyk_image_transcoded.pdf; confirm SSIM >= 0.98 or documented N/A.",
+          "expected_result": "SSIM >= 0.98 for transcoded output."
+        }
+      ],
+      "expected_artifacts": [
+        "src/core/CmykHandler.h (new)",
+        "src/core/CmykHandler.cpp (new)",
+        "src/core/PDFOptimizer.cpp (transcode wiring)",
+        "src/core/PDFOptimizer.h (transcodeCmykToRgb + transcodedCmyk)",
+        "src/codecs/JpegCodec.cpp (RGB transcode encode path)",
+        "tools/run_optimize.cpp (--transcode-cmyk-to-rgb)",
+        "src/main.cpp (GUI checkbox)",
+        "CMakeLists.txt (CmykHandler.cpp in CORE_SOURCES)",
+        "tests/test_pdf_optimizer.cpp (transcode tests)"
+      ],
+      "touches_files": [
+        "src/core/CmykHandler.h",
+        "src/core/CmykHandler.cpp",
+        "src/core/PDFOptimizer.h",
+        "src/core/PDFOptimizer.cpp",
+        "src/codecs/JpegCodec.cpp",
+        "tools/run_optimize.cpp",
+        "src/main.cpp",
+        "CMakeLists.txt",
+        "tests/test_pdf_optimizer.cpp"
+      ],
+      "inputs": [
+        "CMYK preserve path from P2-T4",
+        "architecture CmykHandler component",
+        "CMYK corpus fixture"
+      ],
+      "outputs": [
+        "Opt-in CMYK->RGB transcode with SSIM gate",
+        "CLI flag + GUI checkbox + result field"
+      ],
+      "status": "done",
+      "size": "L",
+      "context": {
+        "read_files": [
+          {
+            "path": "src/core/PDFOptimizer.cpp",
+            "lines": "226-238",
+            "why": "CMYK branch the transcode path hooks into"
+          },
+          {
+            "path": "src/core/PDFOptimizer.h",
+            "lines": "9-92",
+            "why": "OptimizationOptions/OptimizationResult to extend with transcodeCmykToRgb/transcodedCmyk"
+          },
+          {
+            "path": "src/codecs/JpegCodec.cpp",
+            "lines": "1-78",
+            "why": "JPEG encoder to add RGB transcode encode path"
+          },
+          {
+            "path": "tools/run_optimize.cpp",
+            "lines": "7-119",
+            "why": "CLI flag parsing/help to extend"
+          },
+          {
+            "path": "src/main.cpp",
+            "lines": "87-121",
+            "why": "GUI checkbox area and applyProfileDefaults"
+          },
+          {
+            "path": "tests/test_pdf_optimizer.cpp",
+            "lines": "1-58",
+            "why": "optimizer test pattern"
+          },
+          {
+            "path": "CMakeLists.txt",
+            "lines": "50-61",
+            "why": "CORE_SOURCES list to add CmykHandler.cpp"
+          }
+        ],
+        "contracts": [
+          "struct OptimizationOptions { ... bool deduplicateStreams; }  [existing; add bool transcodeCmykToRgb=false]",
+          "struct OptimizationResult { ... }  [existing; add int transcodedCmyk=0]",
+          "run_optimize flag --transcode-cmyk-to-rgb  [new; must appear in --help]",
+          "CMYK->RGB transcode gated by SSIM>=0.98; default OFF (preservation)  [AC-C3b]",
+          "CmykHandler: new src/core/CmykHandler.h/.cpp; must be added to CORE_SOURCES in CMakeLists.txt"
+        ],
+        "architecture_excerpt": "| CmykHandler (preserve path + opt-in transcode path) | [new] | ICC/DeviceCMYK round-trip preservation; `--transcode-cmyk-to-rgb` conversion with delta-E sampling internally, SSIM>=0.98 as normative gate |",
+        "plan_excerpt": "`run_optimize --transcode-cmyk-to-rgb`; GUI checkbox; USAGE.md slider/profile/CMYK docs.",
+        "requirement_ids": [
+          "AC-C3b",
+          "J-C2",
+          "S2",
+          "S3",
+          "S7",
+          "S8"
+        ],
+        "test_command": "ctest --test-dir build -R PDFOptimizerTest --output-on-failure",
+        "memory_notes": [],
+        "needs_graphify": false,
+        "size": "L"
+      }
+    },
+    {
+      "id": "P2-T6",
+      "title": "Activate stream dedup via ReferenceRewriter referrer-repoint + distinct-duplicate fixture + P1-T3 rewrite (AC-C5)",
+      "description": "Replace the inert ESC-001 isIndirect guard and the infeasible replaceObject call in PDFOptimizer's dedup loop with reference-rewriting: for each duplicate stream A byte-identical to kept B (FNV hash + dict-key signature, additionally requiring /Filter and /DecodeParms to match), a cycle-safe referrer walk over getAllObjects() + trailer repoints every reference to A -> B via QPDFObjectHandle::replaceKey / setArrayItem; A then drops under the already-set setPreserveUnreferencedObjects(false). Introduce a focused ReferenceRewriter component (src/core/ReferenceRewriter.{h,cpp}), add a staged $TMPDIR fixture distinct_duplicate_streams.pdf that actually references both distinct byte-identical streams, and rewrite the Phase-1 P1-T3 test to assert streamsDeduplicated>=1 with defaults.",
+      "agent": "build_worker",
+      "task_type": "code",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Given a staged $TMPDIR fixture distinct_duplicate_streams.pdf with two distinct indirect stream objects sharing byte-identical raw data and matching signatures (same /Subtype /Width /Height /ColorSpace /BitsPerComponent, plus matching /Filter and /DecodeParms), where BOTH streams are actually referenced from page content/resources (e.g. /Resources /XObject << /Im1 A /Im2 B >> with both drawn on the page) - not the reference-shared transparency.pdf and not added to the canonical 14 - when optimized with defaults (deduplicateStreams=true), then result.streamsDeduplicated>=1 and the output shares one stream object for that pair (every reference to A is repointed to B; QPDF().processFile clean; qpdf --json shows a single stream).",
+        "Given the same fixture, when optimized with --no-dedup (deduplicateStreams=false), then result.streamsDeduplicated==0 and both distinct stream objects remain.",
+        "Given the Phase-1 P1-T3 test in tests/test_structure_writer.cpp, when it is rewritten for this phase, then it asserts streamsDeduplicated>=1 with defaults against the new fixture and ==0 for the --no-dedup run, while the shared-XObject checks remain valid and all outputs pass QPDF().processFile."
+      ],
+      "tests": [
+        {
+          "test_id": "P2-T6-T01",
+          "linked_acceptance_criterion": "Given a staged $TMPDIR fixture distinct_duplicate_streams.pdf with two distinct indirect stream objects sharing byte-identical raw data and matching signatures (same /Subtype /Width /Height /ColorSpace /BitsPerComponent, plus matching /Filter and /DecodeParms), where BOTH streams are actually referenced from page content/resources (e.g. /Resources /XObject << /Im1 A /Im2 B >> with both drawn on the page) - not the reference-shared transparency.pdf and not added to the canonical 14 - when optimized with defaults (deduplicateStreams=true), then result.streamsDeduplicated>=1 and the output shares one stream object for that pair (every reference to A is repointed to B; QPDF().processFile clean; qpdf --json shows a single stream).",
+          "type": "integration",
+          "description": "Generate generateDistinctDuplicateStreams() (staged $TMPDIR, both streams referenced); optimize with defaults; assert streamsDeduplicated>=1, QPDF().processFile clean, and the duplicate pair collapses to a single stream object (references repointed).",
+          "expected_result": "Dedup counter live (>=1); duplicate streams share one object; output valid."
+        },
+        {
+          "test_id": "P2-T6-T02",
+          "linked_acceptance_criterion": "Given the same fixture, when optimized with --no-dedup (deduplicateStreams=false), then result.streamsDeduplicated==0 and both distinct stream objects remain.",
+          "type": "integration",
+          "description": "Optimize the fixture with deduplicateStreams=false; assert streamsDeduplicated==0 and both distinct stream objects still present.",
+          "expected_result": "--no-dedup leaves both streams and reports 0."
+        },
+        {
+          "test_id": "P2-T6-T03",
+          "linked_acceptance_criterion": "Given the Phase-1 P1-T3 test in tests/test_structure_writer.cpp, when it is rewritten for this phase, then it asserts streamsDeduplicated>=1 with defaults against the new fixture and ==0 for the --no-dedup run, while the shared-XObject checks remain valid and all outputs pass QPDF().processFile.",
+          "type": "integration",
+          "description": "Rewrite StructureWriter.DedupCountedWithDefaultsZeroWithout to use generateDistinctDuplicateStreams() with EXPECT_GE(...,1) defaults / EXPECT_EQ(...,0) no-dedup; keep the shared-XObject T01/T03 checks; assert QPDF().processFile on all outputs.",
+          "expected_result": "Rewritten P1-T3 test asserts >=1 defaults / ==0 no-dedup and passes."
+        }
+      ],
+      "expected_artifacts": [
+        "src/core/ReferenceRewriter.h (new)",
+        "src/core/ReferenceRewriter.cpp (new)",
+        "src/core/PDFOptimizer.cpp (dedup loop: reference-rewriting repoint)",
+        "CMakeLists.txt (ReferenceRewriter.cpp in CORE_SOURCES)",
+        "tests/test_corpus_generator.h (new fixture method)",
+        "tests/test_corpus_generator.cpp (generateDistinctDuplicateStreams)",
+        "tests/test_structure_writer.cpp (P1-T3 rewrite)"
+      ],
+      "touches_files": [
+        "src/core/ReferenceRewriter.h",
+        "src/core/ReferenceRewriter.cpp",
+        "src/core/PDFOptimizer.cpp",
+        "CMakeLists.txt",
+        "tests/test_corpus_generator.h",
+        "tests/test_corpus_generator.cpp",
+        "tests/test_structure_writer.cpp"
+      ],
+      "inputs": [
+        "PDFOptimizer.cpp:515-567 dedup loop (ESC-001 isIndirect guard + replaceObject)",
+        "architecture ReferenceRewriter component row + Stream dedup replace path row",
+        "requirements AC-C5 (reference-rewriting mechanism)",
+        "corpus generator createPdfWithImage / generateTransparency fixture patterns"
+      ],
+      "outputs": [
+        "ReferenceRewriter component (cycle-safe referrer walk + replaceKey/setArrayItem repoint)",
+        "Live stream dedup: streamsDeduplicated>=1 on the staged fixture",
+        "Staged distinct_duplicate_streams.pdf fixture (both streams referenced)",
+        "Rewritten P1-T3 test asserting >=1 / ==0"
+      ],
+      "status": "done",
+      "size": "L",
+      "context": {
+        "read_files": [
+          {
+            "path": "src/core/PDFOptimizer.cpp",
+            "lines": "515-567",
+            "why": "dedup loop; remove ESC-001 isIndirect guard + replaceObject, add reference-rewriting repoint"
+          },
+          {
+            "path": "tests/test_corpus_generator.h",
+            "lines": "1-47",
+            "why": "generator API to add the distinct-duplicate fixture"
+          },
+          {
+            "path": "tests/test_corpus_generator.cpp",
+            "lines": "39-95",
+            "why": "createPdfWithImage helper pattern for the new fixture"
+          },
+          {
+            "path": "tests/test_corpus_generator.cpp",
+            "lines": "260-320",
+            "why": "generateTransparency fixture pattern to model the two-stream fixture"
+          },
+          {
+            "path": "tests/test_structure_writer.cpp",
+            "lines": "1-90",
+            "why": "P1-T3 test to rewrite to >=1 on the new fixture"
+          },
+          {
+            "path": "CMakeLists.txt",
+            "lines": "50-62",
+            "why": "CORE_SOURCES list to add ReferenceRewriter.cpp"
+          },
+          {
+            "path": "docs/requirements/requirements.md",
+            "lines": "519-549",
+            "why": "AC-C5 normative text and reference-rewriting implementation note"
+          }
+        ],
+        "contracts": [
+          "if (!obj.isStream() || !obj.isIndirect()) continue;  [existing PDFOptimizer.cpp:519 - keep the getAllObjects() stream filter; seenStreams may keep storing indirect handles for signature comparison]",
+          "ESC-001 block at PDFOptimizer.cpp:553-557 (if (it->second.isIndirect()) continue; ... pdf.replaceObject(obj.getObjGen(), it->second);)  [REMOVE both: replaceObject cannot alias indirect streams; replace with a ReferenceRewriter repoint]",
+          "keep obj.getObjGen() != it->second.getObjGen() guard (PDFOptimizer.cpp:547) and the per-pair try/catch (PDFOptimizer.cpp:553-563)  [AC-C5]",
+          "signature detection [existing]: FNV-1a hash over raw stream bytes + dict keys /Subtype /Width /Height /ColorSpace /BitsPerComponent; AC-C5 additionally requires /Filter and /DecodeParms to match (treat as part of the signature)",
+          "ReferenceRewriter [new src/core/ReferenceRewriter.{h,cpp}]: walk pdf.getAllObjects() + trailer; recurse only into DIRECT containers (never follow indirect refs -> cycle-safe, bounded by object count); for a target objGen repoint dict entries via QPDFObjectHandle::replaceKey and array entries via QPDFObjectHandle::setArrayItem",
+          "QPDF::replaceObject rejects any indirect handle except a self-stream (QPDF_objects.cc:1967-1968); PDF streams are always indirect, so replaceObject cannot alias duplicates. replaceKey/setArrayItem accept indirect references (QPDFObjectHandle.hh:917,944) -> reference-rewriting is the working mechanism",
+          "streamsDeduplicated >= 1 with defaults; == 0 with --no-dedup; qpdf --check clean  [AC-C5]",
+          "ReferenceRewriter.cpp must be added to CORE_SOURCES in CMakeLists.txt (explicit list, no globbing)",
+          "staged fixture distinct_duplicate_streams.pdf: two DISTINCT indirect image streams, byte-identical raw data, matching /Subtype /Width /Height /ColorSpace /BitsPerComponent + /Filter + /DecodeParms, BOTH referenced (e.g. /Resources /XObject << /Im1 A /Im2 B >> both drawn); NOT reference-shared; NOT in canonical 14"
+        ],
+        "architecture_excerpt": "| Stream dedup replace path | [new/changed] | Replaces the inert ESC-001 isIndirect() skip and the replaceObject call with a reference-rewriting path: for each duplicate stream A byte-identical to kept B, repoint every reference to A to B, then let A drop under the already-set setPreserveUnreferencedObjects(false). Retains the byte-identical signature detection (FNV hash + five dict keys), the objGen != guard and per-pair try/catch; streamsDeduplicated now increments for distinct byte-identical indirect streams (AC-C5, Phase 2). replaceObject is no longer called - it cannot alias duplicate streams. |\n| ReferenceRewriter (core/ReferenceRewriter.{h,cpp}) | [new] | Cycle-safe referrer walk over every object (pdf.getAllObjects() + trailer) and its direct nested dicts/arrays; for a target objGen it repoints matching indirect references via replaceKey / setArrayItem. Never follows indirect references during traversal (each object is visited once from getAllObjects()), so cycles terminate and cost is bounded by object count. Only invoked when the byte-identical signature + objGen != guard already matched, and only for /Filter/DecodeParms-compatible streams (AC-C5, Phase 2) |",
+        "plan_excerpt": "- Product fix (reference-rewriting): in src/core/PDFOptimizer.cpp replace the inert ESC-001 indirect-handle skip and the replaceObject call with a reference-rewriting path - a new ReferenceRewriter helper walks every object (pdf.getAllObjects() + trailer) and its direct nested dicts/arrays, finds every indirect reference to the duplicate's objGen, and repoints it to the kept object via replaceKey / setArrayItem; the now-unreferenced duplicate then drops under the already-set setPreserveUnreferencedObjects(false). Keep the byte-identical signature detection (FNV hash + the five dict keys), the objGen != guard, and the per-pair try/catch.\n- New staged fixture: distinct_duplicate_streams.pdf in $TMPDIR - two distinct indirect stream objects with byte-identical raw data and matching signatures. Both streams must actually be referenced (e.g. /Resources /XObject << /Im1 A /Im2 B >> with both drawn on the page) - a duplicate with no referrer cannot be deduped. NOT the reference-shared transparency.pdf and NOT added to the 14 canonical files.\n- Test rewrite: the Phase-1 P1-T3 test (tests/test_structure_writer.cpp, currently asserting streamsDeduplicated == 0) is rewritten to assert >= 1 against the new staged fixture, retaining a == 0 assertion for the --no-dedup run.",
+        "requirement_ids": [
+          "AC-C5",
           "AC-B3",
           "S1",
           "S2"
         ],
         "test_command": "ctest --test-dir build -R StructureWriter --output-on-failure",
         "memory_notes": [],
+        "graph_excerpt": "graphify query (404 nodes; start QPDFObjectHandle, PDFOptimizer, deduplicateStreams, ESC-001, streamFilterToString; 76 nodes). PDFOptimizer [src/core/PDFOptimizer.h L94]; deduplicateStreams [src/core/PDFOptimizer.h L25]; optimize [src/core/PDFOptimizer.h L99]; OptimizationResult [src/core/PDFOptimizer.h L67]; QPDFObjectHandle (external QPDF symbol, no src). ESC-001 node [docs/code_review/escalations.md L3]. No ReferenceRewriter node yet (new component).",
         "needs_graphify": false,
-        "size": "M"
+        "size": "L"
       }
     },
     {
-      "id": "P1-T4",
-      "title": "CTest wiring + full-suite green gate (S1)",
-      "description": "Wire the three new Phase-1 test files into pdfcompress_tests via one line each in CMakeLists.txt, rebuild, and bring the full ctest suite to 100% green. Owns the only CMakeLists.txt edit in Phase 1.",
-      "agent": "build_worker",
-      "task_type": "code",
-      "dependencies": [
-        "P1-T1",
-        "P1-T2",
-        "P1-T3"
-      ],
-      "acceptance_criteria": [
-        "Given the three new test files from P1-T1/P1-T2/P1-T3, when CMakeLists.txt add_executable(pdfcompress_tests ...) is inspected, then each file is appended on its own line and nothing else in CMakeLists.txt changed.",
-        "Given the rewired build, when cmake --build build && ctest --test-dir build --output-on-failure runs, then the suite is 100% green (render-diff N/A allowed only when PDFium unavailable)."
-      ],
-      "tests": [
-        {
-          "test_id": "P1-T4-T01",
-          "linked_acceptance_criterion": "Given the three new test files from P1-T1/P1-T2/P1-T3, when CMakeLists.txt add_executable(pdfcompress_tests ...) is inspected, then each file is appended on its own line and nothing else in CMakeLists.txt changed.",
-          "type": "manual",
-          "description": "Inspect git diff --stat and the add_executable block: exactly three added lines, no other CMakeLists.txt hunks.",
-          "expected_result": "Diff shows only the three test-file lines."
-        },
-        {
-          "test_id": "P1-T4-T02",
-          "linked_acceptance_criterion": "Given the rewired build, when cmake --build build && ctest --test-dir build --output-on-failure runs, then the suite is 100% green (render-diff N/A allowed only when PDFium unavailable).",
-          "type": "integration",
-          "description": "Full clean configure + build + ctest run from repo root.",
-          "expected_result": "100% tests passed, 0 failed."
-        }
-      ],
-      "expected_artifacts": [
-        "CMakeLists.txt (3 added lines)"
-      ],
-      "touches_files": [
-        "CMakeLists.txt"
-      ],
-      "inputs": [
-        "tests/test_profile_defaults.cpp",
-        "tests/test_stripping_profiles.cpp",
-        "tests/test_structure_writer.cpp"
-      ],
-      "outputs": [
-        "pdfcompress_tests binary including Phase-1 tests",
-        "green ctest run"
-      ],
-      "status": "done",
-      "size": "S",
-      "context": {
-        "read_files": [
-          {
-            "path": "CMakeLists.txt",
-            "lines": "144-174",
-            "why": "file being modified: add three test files to pdfcompress_tests"
-          },
-          {
-            "path": "tests/test_pdf_optimizer.cpp",
-            "lines": "1-20",
-            "why": "include/link pattern the new files follow"
-          }
-        ],
-        "contracts": [
-          "add_executable(pdfcompress_tests ...) + gtest_discover_tests(pdfcompress_tests) + BUILD_TESTING=ON  [existing, extend file list only]"
-        ],
-        "architecture_excerpt": "| 21 | Test framework | **GTest + CTest** [existing \u2014 locked] | Locked per Phase 0; new routing/DPI/JBIG2/font/password tests are `TEST(Suite,Case)` | \u2014 |",
-        "plan_excerpt": "- **STOP boundary:** STOP after verifier tests green + USAGE.md defaults table + both TSVs archived \u2014 no Phase 2 work until AC-B1/B2/B3 pass and any default dispute is filed as a requirements change.",
-        "requirement_ids": [
-          "S1",
-          "AC-B1",
-          "AC-B2",
-          "AC-B3"
-        ],
-        "test_command": "ctest --test-dir build --output-on-failure",
-        "memory_notes": [],
-        "needs_graphify": false,
-        "size": "S"
-      }
-    },
-    {
-      "id": "P1-T5",
-      "title": "USAGE.md Phase-1 docs + benchmark gate (AC-B4, S6, S8)",
-      "description": "Update USAGE.md with the forProfile defaults table, --linearize/--no-flate-recompress/--no-dedup and strip-flag docs, and replace the stale 20-80% savings claim and other outdated sections with Phase-1 measured benchmark numbers; then run the benchmark gate and archive both TSVs. Owns the only USAGE.md edit in Phase 1.",
+      "id": "P2-T7",
+      "title": "USAGE.md Phase-2 docs + phase gate: full ctest green + benchmark delta (AC-C4, S1, S6, S7, S8)",
+      "description": "Update USAGE.md for every Phase-2 user-visible change (slider lossy-only, PNG/lossless alpha, CMYK preserve default, --transcode-cmyk-to-rgb off by default, active stream dedup), then run the phase gate: full ctest suite green and the pre/post-Phase-2 benchmark comparison on the canonical 14-file corpus with both TSVs archived.",
       "agent": "build_worker",
       "task_type": "doc",
       "dependencies": [
-        "P1-T4"
+        "P2-T1",
+        "P2-T2",
+        "P2-T3",
+        "P2-T4",
+        "P2-T5",
+        "P2-T6",
+        "P2-T8",
+        "P2-T9",
+        "P2-T10"
       ],
       "acceptance_criteria": [
-        "Given OptimizationOptions::forProfile as locked by P1-T1 tests, when USAGE.md Compression Profiles section is read, then it contains a defaults table matching the code (MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, linearize=false) plus --linearize/--no-flate-recompress/--no-dedup and --strip-*/--no-strip-* flag docs.",
-        "Given the pre-Phase-1 USAGE.md stale claims, when USAGE.md is read after the edit, then the 20-80% savings sentence is replaced with measured Phase-1 benchmark numbers and the outdated statements (slider affects all classes, linearization always on, empty Tests section) are corrected with no other behavior claims added.",
-        "Given the Phase-1 change set (no compression-logic change), when benchmark/run_benchmark.sh is run on the 14-file corpus and compared run-to-run (or against an archived pre-Phase-1 TSV when present), then pdfcompress rows agree within \u00b12% on every file and both TSV paths are reported as archived."
+        "Given the Phase-2 behavior changes, when USAGE.md is read, then it documents that the JPEG quality slider affects only lossy classes (Photo/Screenshot/LineArt) and that Monochrome/ScannedText ignore it, PNG/lossless selection for alpha and MaxQuality, CMYK preservation by default, --transcode-cmyk-to-rgb off by default, and that stream dedup is now active.",
+        "Given the Phase-2 change set, when run_optimize --help and the CLI flags are inspected, then every new user-visible option (--transcode-cmyk-to-rgb) is documented in USAGE.md and listed by --help (CLI parity S7).",
+        "Given the Phase-2 build, when cmake --build build && ctest --test-dir build --output-on-failure runs, then the full suite is 100% green (render-diff N/A allowed only when PDFium unavailable) (S1).",
+        "Given pre-Phase-2 and post-Phase-2 benchmark runs on the same 14-file corpus, when benchmark/run_benchmark.sh is run, then screenshot/line-art MaxQuality rows change codec (Flate vs DCT) at SSIM 1.0, photo rows are within +/-5%, the CMYK row is reason-logged (not silently skipped), and both TSV paths are archived (AC-C4, S6)."
       ],
       "tests": [
         {
-          "test_id": "P1-T5-T01",
-          "linked_acceptance_criterion": "Given OptimizationOptions::forProfile as locked by P1-T1 tests, when USAGE.md Compression Profiles section is read, then it contains a defaults table matching the code (MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, linearize=false) plus --linearize/--no-flate-recompress/--no-dedup and --strip-*/--no-strip-* flag docs.",
+          "test_id": "P2-T7-T01",
+          "linked_acceptance_criterion": "Given the Phase-2 behavior changes, when USAGE.md is read, then it documents that the JPEG quality slider affects only lossy classes (Photo/Screenshot/LineArt) and that Monochrome/ScannedText ignore it, PNG/lossless selection for alpha and MaxQuality, CMYK preservation by default, --transcode-cmyk-to-rgb off by default, and that stream dedup is now active.",
           "type": "manual",
-          "description": "Read USAGE.md profiles/flags sections; cross-check every cell against forProfile in src/core/PDFOptimizer.h:27-64 and run_optimize --help output.",
-          "expected_result": "Table matches code exactly; all flags documented."
+          "description": "Read USAGE.md slider/profile/codec/CMYK/dedup sections; cross-check each claim against DecisionEngine.cpp, PDFOptimizer.h and run_optimize --help.",
+          "expected_result": "Every Phase-2 behavior is documented accurately."
         },
         {
-          "test_id": "P1-T5-T02",
-          "linked_acceptance_criterion": "Given the pre-Phase-1 USAGE.md stale claims, when USAGE.md is read after the edit, then the 20-80% savings sentence is replaced with measured Phase-1 benchmark numbers and the outdated statements (slider affects all classes, linearization always on, empty Tests section) are corrected with no other behavior claims added.",
+          "test_id": "P2-T7-T02",
+          "linked_acceptance_criterion": "Given the Phase-2 change set, when run_optimize --help and the CLI flags are inspected, then every new user-visible option (--transcode-cmyk-to-rgb) is documented in USAGE.md and listed by --help (CLI parity S7).",
           "type": "manual",
-          "description": "Grep USAGE.md for 20-80, linearization-always, empty-tests and slider-all-classes claims; confirm each is replaced/corrected and numbers cite the archived TSV.",
-          "expected_result": "No stale claim remains; numbers trace to TSV."
+          "description": "Run ./build/run_optimize --help; confirm --transcode-cmyk-to-rgb is listed and appears in the USAGE.md flag table.",
+          "expected_result": "CLI flag parity and documentation complete."
         },
         {
-          "test_id": "P1-T5-T03",
-          "linked_acceptance_criterion": "Given the Phase-1 change set (no compression-logic change), when benchmark/run_benchmark.sh is run on the 14-file corpus and compared run-to-run (or against an archived pre-Phase-1 TSV when present), then pdfcompress rows agree within \u00b12% on every file and both TSV paths are reported as archived.",
+          "test_id": "P2-T7-T03",
+          "linked_acceptance_criterion": "Given the Phase-2 build, when cmake --build build && ctest --test-dir build --output-on-failure runs, then the full suite is 100% green (render-diff N/A allowed only when PDFium unavailable) (S1).",
+          "type": "integration",
+          "description": "Clean build and full ctest run from repo root; confirm 100% pass with only the allowed render-diff N/A skip.",
+          "expected_result": "Full suite 100% green."
+        },
+        {
+          "test_id": "P2-T7-T04",
+          "linked_acceptance_criterion": "Given pre-Phase-2 and post-Phase-2 benchmark runs on the same 14-file corpus, when benchmark/run_benchmark.sh is run, then screenshot/line-art MaxQuality rows change codec (Flate vs DCT) at SSIM 1.0, photo rows are within +/-5%, the CMYK row is reason-logged (not silently skipped), and both TSV paths are archived (AC-C4, S6).",
           "type": "manual",
-          "description": "Run bash benchmark/run_benchmark.sh build, archive the TSV path(s); compare pdfcompress rows across the two runs (or vs pre-Phase-1 TSV); compute per-row size delta.",
-          "expected_result": "Every pdfcompress row within \u00b12%; both TSV paths reported."
+          "description": "Run bash benchmark/run_benchmark.sh build before and after; compare pdfcompress rows for codec change, +/-5% photo tolerance, CMYK reason log; archive both benchmark_results_*.tsv paths.",
+          "expected_result": "AC-C4 delta satisfied; both TSVs archived."
         }
       ],
       "expected_artifacts": [
-        "USAGE.md (profiles table + flags + measured numbers)",
-        "benchmark_results_*.tsv (two runs archived)"
+        "USAGE.md (Phase-2 behavior docs)",
+        "benchmark_results_*.tsv (pre/post archived)"
       ],
       "touches_files": [
         "USAGE.md"
       ],
       "inputs": [
-        "src/core/PDFOptimizer.h forProfile",
-        "tools/run_optimize.cpp --help",
-        "benchmark TSV output"
+        "Phase-2 product changes",
+        "benchmark/run_benchmark.sh"
       ],
       "outputs": [
         "Updated USAGE.md",
-        "two archived benchmark TSVs with \u00b12% gate result"
+        "Phase-2 benchmark delta + archived TSVs"
       ],
       "status": "done",
       "size": "M",
@@ -430,35 +783,604 @@
         "read_files": [
           {
             "path": "USAGE.md",
-            "lines": "122-214",
-            "why": "sections being corrected: Optimize pipeline, CLI, profiles table, output claims"
+            "lines": "1-324",
+            "why": "doc being updated"
           },
           {
             "path": "src/core/PDFOptimizer.h",
-            "lines": "27-64",
-            "why": "normative forProfile defaults the table must match"
+            "lines": "9-92",
+            "why": "options/result fields to document"
           },
           {
             "path": "tools/run_optimize.cpp",
             "lines": "7-26",
-            "why": "help text listing every flag to document"
+            "why": "help text to cross-check"
+          },
+          {
+            "path": "benchmark/run_benchmark.sh",
+            "lines": "1-58",
+            "why": "benchmark gate script"
+          },
+          {
+            "path": "docs/requirements/requirements.md",
+            "lines": "465-529",
+            "why": "AC-C1..C5 normative behavior to document"
           }
         ],
         "contracts": [
-          "MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, linearize=false  [normative, locked 2026-10-04]"
+          "USAGE.md must document: slider lossy-only; PNG/lossless for alpha + MaxQuality; CMYK preserve default; --transcode-cmyk-to-rgb off by default; active stream dedup  [S8]",
+          "run_optimize --help lists every new flag (--transcode-cmyk-to-rgb)  [S7]",
+          "full ctest suite 100% green  [S1]",
+          "benchmark before/after on the same corpus; TSVs archived  [AC-C4, S6]"
         ],
-        "architecture_excerpt": "| 18 | Language | **C++20, RAII, `-Wall -Wextra` clean** [existing \u2014 hard constraint] | Locked stack; all new code follows existing hygiene | \u2014 |",
-        "plan_excerpt": "- **STOP boundary:** STOP after verifier tests green + USAGE.md defaults table + both TSVs archived \u2014 no Phase 2 work until AC-B1/B2/B3 pass and any default dispute is filed as a requirements change.",
+        "architecture_excerpt": "| `run_optimize` new flags | [new/changed] | `--transcode-cmyk-to-rgb`, `--dpi/--no-downsample`, `--no-jbig2/--jbig2-lossy`, `--subset-fonts/--no-subset-fonts`, `--password/--re-encrypt`, `--jobs` |",
+        "plan_excerpt": "**Per-phase gates:** Benchmark: screenshot/line-art MaxQuality rows change codec at SSIM 1.0, photos +/-5%, CMYK row reason-logged, all rows S2-S5; manual PDFs: `screenshot_flat`, `line_art`, `photo_jpeg`, `transparency` (alpha), `cmyk_image`, `monochrome_bw` + `grayscale_scan` controls ...",
         "requirement_ids": [
-          "AC-B4",
+          "AC-C4",
+          "S1",
           "S6",
-          "S8",
-          "S7"
+          "S7",
+          "S8"
         ],
-        "test_command": "bash benchmark/run_benchmark.sh build",
+        "test_command": "ctest --test-dir build --output-on-failure",
         "memory_notes": [],
         "needs_graphify": false,
         "size": "M"
+      }
+    },
+    {
+      "id": "P2-T8",
+      "title": "Scope benchmark-TSV SSIM gate to pdfcompress rows + benchmark canonical-14 loop (ESC-012, ESC-013)",
+      "description": "Restrict the CorpusGenerator.BenchmarkTsvSsimThresholds gate in tests/test_corpus_verifier.cpp so the >=0.98 SSIM threshold applies only to rows whose Tool column is 'pdfcompress' (a third-party tool row below 0.98 must not fail the product verifier), and drive benchmark/run_benchmark.sh's corpus loop from the canonical 14-file list so non-canonical fixtures and test byproducts no longer contaminate the TSV or the AC-C4 delta.",
+      "agent": "build_worker",
+      "task_type": "code",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Given the newest benchmark_results_*.tsv contains numeric SSIM rows for several tools (pdfcompress, qpdf, gs_ebook, gs_screen, ocrmypdf), when CorpusGenerator.BenchmarkTsvSsimThresholds runs, then the >=0.98 gate (kMinSsim) is applied only to rows whose Tool column equals 'pdfcompress'; a third-party tool row below 0.98 does not fail the test, while the header SSIM/PSNR checks and the N/A skip handling are preserved.",
+        "Given the shared corpus directory holds the canonical 14 PDFs plus non-canonical fixtures (large_uncompressed.pdf, bitpacked_bpc1.pdf, distinct_duplicate_streams.pdf) and test byproducts (*_optimized.pdf, *.qpdf.pdf, *.opt.pdf, *.gs*.pdf, *.ocrmypdf.pdf, *.check_*.pdf, *.q70.pdf), when benchmark/run_benchmark.sh runs, then it benchmarks exactly the canonical 14 corpus files (or at minimum excludes every non-canonical fixture and byproduct), keeping the existing byproduct skip patterns.",
+        "Given the ESC-012/ESC-013 fixes, when the full ctest suite runs from the repo root after a build, then CorpusGenerator.BenchmarkTsvSsimThresholds passes (or skips when no benchmark TSV is present) and no previously-passing test regresses."
+      ],
+      "tests": [
+        {
+          "test_id": "P2-T8-T01",
+          "linked_acceptance_criterion": "Given the newest benchmark_results_*.tsv contains numeric SSIM rows for several tools (pdfcompress, qpdf, gs_ebook, gs_screen, ocrmypdf), when CorpusGenerator.BenchmarkTsvSsimThresholds runs, then the >=0.98 gate (kMinSsim) is applied only to rows whose Tool column equals 'pdfcompress'; a third-party tool row below 0.98 does not fail the test, while the header SSIM/PSNR checks and the N/A skip handling are preserved.",
+          "type": "integration",
+          "description": "Run ctest --test-dir build -R CorpusGenerator.BenchmarkTsvSsimThresholds --output-on-failure against the current multi-tool TSV (which includes gs_ebook/gs_screen rows below 0.98); confirm it passes because the gate now evaluates only pdfcompress rows.",
+          "expected_result": "CorpusGenerator.BenchmarkTsvSsimThresholds passes; third-party sub-0.98 rows no longer fail the product verifier."
+        },
+        {
+          "test_id": "P2-T8-T02",
+          "linked_acceptance_criterion": "Given the shared corpus directory holds the canonical 14 PDFs plus non-canonical fixtures (large_uncompressed.pdf, bitpacked_bpc1.pdf, distinct_duplicate_streams.pdf) and test byproducts (*_optimized.pdf, *.qpdf.pdf, *.opt.pdf, *.gs*.pdf, *.ocrmypdf.pdf, *.check_*.pdf, *.q70.pdf), when benchmark/run_benchmark.sh runs, then it benchmarks exactly the canonical 14 corpus files (or at minimum excludes every non-canonical fixture and byproduct), keeping the existing byproduct skip patterns.",
+          "type": "manual",
+          "description": "Run bash benchmark/run_benchmark.sh build; inspect the generated TSV and confirm it contains rows only for the canonical 14 basenames (no large_uncompressed/bitpacked_bpc1/distinct_duplicate_streams and no test byproducts).",
+          "expected_result": "TSV rows are limited to the canonical 14 corpus files."
+        },
+        {
+          "test_id": "P2-T8-T03",
+          "linked_acceptance_criterion": "Given the ESC-012/ESC-013 fixes, when the full ctest suite runs from the repo root after a build, then CorpusGenerator.BenchmarkTsvSsimThresholds passes (or skips when no benchmark TSV is present) and no previously-passing test regresses.",
+          "type": "integration",
+          "description": "Run ctest --test-dir build --output-on-failure from the repo root; confirm 100% pass (render-diff N/A allowed only when PDFium is unavailable).",
+          "expected_result": "Full suite green with no regressions."
+        }
+      ],
+      "expected_artifacts": [
+        "tests/test_corpus_verifier.cpp (SSIM gate scoped to pdfcompress rows)",
+        "benchmark/run_benchmark.sh (canonical-14 corpus loop)"
+      ],
+      "touches_files": [
+        "tests/test_corpus_verifier.cpp",
+        "benchmark/run_benchmark.sh"
+      ],
+      "inputs": [
+        "ESC-012 diagnosis (verifier SSIM gate mis-scoped to all tools)",
+        "ESC-013 diagnosis (benchmark loops every *.pdf in the shared corpus dir)",
+        "kCanonicalFiles() canonical-14 list at tests/test_corpus_verifier.cpp:41-59"
+      ],
+      "outputs": [
+        "Verifier SSIM gate applied only to pdfcompress rows",
+        "Benchmark loop over the canonical 14"
+      ],
+      "status": "done",
+      "size": "M",
+      "context": {
+        "read_files": [
+          {
+            "path": "tests/test_corpus_verifier.cpp",
+            "lines": "439-534",
+            "why": "BenchmarkTsvSsimThresholds test and its kMinSsim gate to scope by Tool"
+          },
+          {
+            "path": "tests/test_corpus_verifier.cpp",
+            "lines": "37-59",
+            "why": "kCanonicalFiles() canonical-14 list to mirror in the benchmark"
+          },
+          {
+            "path": "benchmark/run_benchmark.sh",
+            "lines": "90-139",
+            "why": "the *.pdf corpus loop and byproduct skip patterns to scope to the canonical 14"
+          },
+          {
+            "path": "docs/requirements/requirements.md",
+            "lines": "512-517",
+            "why": "AC-C4 normative benchmark gate (same 14-file corpus)"
+          }
+        ],
+        "contracts": [
+          "const std::vector<std::string>& kCanonicalFiles() -> 14 basenames [existing tests/test_corpus_verifier.cpp:41-59; mirror as the benchmark's file list]",
+          "kMinSsim = 0.98 [existing tests/test_corpus_verifier.cpp:502; do NOT lower]; after the fix the gate applies to rows whose Tool == 'pdfcompress' only",
+          "TSV columns: File, Original Size, Tool, Output Size, Reduction %, Time (ms), SSIM, PSNR, Status [existing benchmark/run_benchmark.sh:22]",
+          "Keep the existing byproduct skip patterns at benchmark/run_benchmark.sh:94 (*_optimized, .qpdf, .opt, .gs, .ocrmypdf)"
+        ],
+        "architecture_excerpt": "| **Benchmark script `run_benchmark.sh`** | [new/changed] | 5-tool matrix (pdfcompress, qpdf `--recompress`, gs ebook/screen, ocrmypdf) with `command -v` guards, SKIPPED vs FAILED, ms timing, idempotency filters, TSV header including SSIM/PSNR, calls render-diff helper, writes `benchmark_results_*.tsv` to cwd+build. |",
+        "plan_excerpt": "- **Per-phase gates:** Benchmark: screenshot/line-art MaxQuality rows change codec at SSIM 1.0, photos +/-5%, CMYK row reason-logged, all rows S2-S5; manual PDFs: `screenshot_flat`, `line_art`, `photo_jpeg`, `transparency` (alpha), `cmyk_image`, `monochrome_bw` + `grayscale_scan` controls, plus the staged `distinct_duplicate_streams.pdf` for AC-C5.",
+        "requirement_ids": [
+          "AC-C4",
+          "S1",
+          "S6"
+        ],
+        "test_command": "ctest --test-dir build -R CorpusGenerator.BenchmarkTsvSsimThresholds --output-on-failure",
+        "memory_notes": [],
+        "graph_excerpt": "",
+        "needs_graphify": false,
+        "size": "M"
+      }
+    },
+    {
+      "id": "P2-T9",
+      "title": "Lossless FlateDecode branch emits embeddable zlib, never a PNG container (ESC-011)",
+      "description": "Fix the AC-C2 defect where the alpha and Screenshot/LineArt MaxQuality lossless branch selects m_pngCodec but PngCodec::encode returns a complete PNG container (0x89 'PNG' + IHDR/IDAT/IEND) while DecisionEngine reports StreamFilter::FlateDecode, so PDFOptimizer embeds PNG bytes under /Filter /FlateDecode and qpdf cannot inflate them. Make the FlateDecode-labelled lossless output a valid zlib/Flate stream embeddable as a PDF image XObject, keeping m_pngCodec reachable per AC-C2.",
+      "agent": "build_worker",
+      "task_type": "code",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Given an alpha-bearing image (hasAlpha=true) whose lossless re-encode is smaller than its source stream, when PDFOptimizer embeds the re-encoded bytes as a /FlateDecode image XObject, then the embedded stream inflates as a valid zlib/Flate stream with no decode error (qpdf --check clean), and the bytes are not a full PNG container (no 0x89 'PNG' signature/IHDR/IEND).",
+        "Given the lossless FlateDecode-labelled branch, when DecisionEngine::compress runs with hasAlpha=true, and again for Screenshot/LineArt under MaxQuality with qualityHint<=0, then m_pngCodec remains the selected codec and StreamFilter::FlateDecode is reported, so AC-C2's m_pngCodec reachability and the existing DecisionEngine tests still hold.",
+        "Given the existing codec and DecisionEngine test suites, when the fix lands, then TEST(DecisionEngine, PngSelectedForAlpha), TEST(DecisionEngine, MaxQualityLosslessUsesPng) and the existing CodecTest cases still pass, and the PngCodec output inflates as a valid zlib stream rather than a PNG container."
+      ],
+      "tests": [
+        {
+          "test_id": "P2-T9-T01",
+          "linked_acceptance_criterion": "Given an alpha-bearing image (hasAlpha=true) whose lossless re-encode is smaller than its source stream, when PDFOptimizer embeds the re-encoded bytes as a /FlateDecode image XObject, then the embedded stream inflates as a valid zlib/Flate stream with no decode error (qpdf --check clean), and the bytes are not a full PNG container (no 0x89 'PNG' signature/IHDR/IEND).",
+          "type": "integration",
+          "description": "Stage a $TMPDIR PDF with an /SMask-bearing image whose FlateDecode source stream is larger than the lossless re-encode (so imagesOptimized==1); optimize with defaults; read the output image stream /Filter (== FlateDecode) and inflate the raw stream with zlib uncompress() (and/or QPDF().processFile) asserting no decode error and no PNG signature.",
+          "expected_result": "Embedded alpha stream is a valid FlateDecode stream; output passes QPDF/qpdf check."
+        },
+        {
+          "test_id": "P2-T9-T02",
+          "linked_acceptance_criterion": "Given the lossless FlateDecode-labelled branch, when DecisionEngine::compress runs with hasAlpha=true, and again for Screenshot/LineArt under MaxQuality with qualityHint<=0, then m_pngCodec remains the selected codec and StreamFilter::FlateDecode is reported, so AC-C2's m_pngCodec reachability and the existing DecisionEngine tests still hold.",
+          "type": "unit",
+          "description": "Re-run TEST(DecisionEngine, PngSelectedForAlpha) and TEST(DecisionEngine, MaxQualityLosslessUsesPng); assert the alpha branch still reports FlateDecode with non-empty bytes that inflate as a zlib stream (m_pngCodec selected).",
+          "expected_result": "m_pngCodec still selected for alpha/MaxQuality-lossless; returned bytes are Flate-decodable."
+        },
+        {
+          "test_id": "P2-T9-T03",
+          "linked_acceptance_criterion": "Given the existing codec and DecisionEngine test suites, when the fix lands, then TEST(DecisionEngine, PngSelectedForAlpha), TEST(DecisionEngine, MaxQualityLosslessUsesPng) and the existing CodecTest cases still pass, and the PngCodec output inflates as a valid zlib stream rather than a PNG container.",
+          "type": "unit",
+          "description": "Add TEST(CodecTest, PngEncodeIsFlateDecodable): PngCodec::encode output inflates via zlib uncompress() and does not begin with the 8-byte PNG signature; re-run the existing CodecTest cases.",
+          "expected_result": "PngCodec output is an embeddable zlib stream; existing codec tests pass."
+        }
+      ],
+      "expected_artifacts": [
+        "src/codecs/PngCodec.cpp (emit embeddable FlateDecode/zlib bytes, not a PNG container)",
+        "src/core/DecisionEngine.cpp (lossless FlateDecode-labelled branch consistency)",
+        "src/codecs/CodecInterface.h (only if a CompressionParams flag is needed; defaulted)",
+        "tests/test_codecs.cpp (PngCodec Flate-decodable unit test)",
+        "tests/test_pdf_optimizer.cpp (alpha re-encode embed regression)"
+      ],
+      "touches_files": [
+        "src/core/DecisionEngine.cpp",
+        "src/codecs/PngCodec.cpp",
+        "src/codecs/CodecInterface.h",
+        "tests/test_codecs.cpp",
+        "tests/test_pdf_optimizer.cpp"
+      ],
+      "inputs": [
+        "ESC-011 diagnosis (PNG container returned with StreamFilter::FlateDecode)",
+        "src/core/DecisionEngine.cpp:46-50 and :71-73 lossless branches",
+        "src/codecs/PngCodec.cpp:20-97 (full PNG container writer)"
+      ],
+      "outputs": [
+        "FlateDecode-labelled lossless output that is a valid embeddable zlib stream",
+        "Regression tests for codec output and optimizer embedding"
+      ],
+      "status": "done",
+      "size": "M",
+      "context": {
+        "read_files": [
+          {
+            "path": "src/codecs/PngCodec.cpp",
+            "lines": "1-99",
+            "why": "codec that writes a full PNG container while labelled FlateDecode; fix its output"
+          },
+          {
+            "path": "src/codecs/PngCodec.h",
+            "lines": "1-16",
+            "why": "PngCodec encode contract"
+          },
+          {
+            "path": "src/codecs/CodecInterface.h",
+            "lines": "17-47",
+            "why": "CompressionParams / ImageCodec::encode contract"
+          },
+          {
+            "path": "src/core/DecisionEngine.cpp",
+            "lines": "18-107",
+            "why": "alpha and MaxQuality lossless branches that select m_pngCodec and report FlateDecode"
+          },
+          {
+            "path": "src/core/PDFOptimizer.cpp",
+            "lines": "460-495",
+            "why": "embedding: replaceStreamData with /Filter FlateDecode for outFilter FlateDecode"
+          },
+          {
+            "path": "tests/test_decision_engine.cpp",
+            "lines": "52-87",
+            "why": "existing alpha/MaxQuality DecisionEngine tests that must keep passing"
+          },
+          {
+            "path": "tests/test_codecs.cpp",
+            "lines": "1-25",
+            "why": "codec test conventions; add a PngCodec Flate-decodable unit test"
+          },
+          {
+            "path": "tests/test_pdf_optimizer.cpp",
+            "lines": "1-46",
+            "why": "optimizer test helpers/conventions for the alpha integration regression"
+          }
+        ],
+        "contracts": [
+          "std::vector<uint8_t> PngCodec::encode(const uint8_t* pixels, const CompressionParams& params)  [existing]; AC-C2 requires the bytes returned for the alpha/lossless branch to be embeddable as a PDF /FlateDecode image stream - a valid zlib/Flate stream, never a full PNG container (ESC-011)",
+          "DecisionEngine::compress(..., hasAlpha, bitsPerComponent, colorSpace)  [existing]; hasAlpha -> m_pngCodec + StreamFilter::FlateDecode; MaxQuality && qualityHint<=0 (Screenshot/LineArt) -> m_pngCodec + FlateDecode",
+          "PDFOptimizer embeds outFilter FlateDecode bytes with imageObj.replaceStreamData(buffer, newName('/FlateDecode'), newNull())  [existing PDFOptimizer.cpp:478-487]; the bytes must inflate under /FlateDecode",
+          "AC-C2: m_pngCodec must remain reachable by a TEST(DecisionEngine, ...) - do not route the alpha branch through ZlibCodec (that would make m_pngCodec unreachable)",
+          "If a CompressionParams flag is needed to distinguish the embeddable-Flate output, add it with a default so existing callers compile  [CodecInterface.h]"
+        ],
+        "architecture_excerpt": "| **Codec layer** [existing] | `src/codecs/JpegCodec.cpp`, `PngCodec.cpp`, `Jp2Codec.cpp`, `ZlibCodec.cpp`, `CodecInterface.h` | `ImageCodec::encode(pixels, CompressionParams)->bytes`: JPEG via TurboJPEG `tjCompress2`, JP2 via OpenJPEG codestream, PNG via libpng, Zlib via `compress2` level 9 / libdeflate |",
+        "plan_excerpt": "- **Scope:** `DecisionEngine.cpp` branch rework (lossy-only slider; PNG branch; ScannedText profile-driven, Monochrome always lossless); new `CmykHandler` (ICC/DeviceCMYK preserve + Adobe APP14 safety + skip-with-reason logging; opt-in transcode with internal delta-E sampling); `run_optimize --transcode-cmyk-to-rgb`; GUI checkbox; USAGE.md slider/profile/CMYK docs.",
+        "requirement_ids": [
+          "AC-C2",
+          "S1",
+          "S7"
+        ],
+        "test_command": "ctest --test-dir build -R 'DecisionEngine|CodecTest|PDFOptimizerTest' --output-on-failure",
+        "memory_notes": [],
+        "graph_excerpt": "",
+        "needs_graphify": false,
+        "size": "M"
+      }
+    },
+    {
+      "id": "P2-T10",
+      "title": "Dedup signature includes /SMask, /Mask, /Type, /Intent so masked streams never merge (ESC-015)",
+      "description": "Extend the byte-identical dedup signature in PDFOptimizer's dedup loop (currently /Subtype /Width /Height /ColorSpace /BitsPerComponent /Filter /DecodeParms + raw-byte hash) to also key on /SMask, /Mask, /Type and /Intent, so two byte-identical image streams that differ only by carrying a soft/color-key mask are never merged (which would repoint referrers and silently change transparency). Add a regression fixture/test proving the masked pair stays distinct while matching pairs still dedup.",
+      "agent": "build_worker",
+      "task_type": "code",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Given two byte-identical indirect image streams that match on every existing signature key (/Subtype /Width /Height /ColorSpace /BitsPerComponent /Filter /DecodeParms) but differ in that one carries an /SMask (or /Mask), when optimized with defaults (deduplicateStreams=true), then the two streams are NOT deduplicated - no referrer is repointed, both stream objects remain, and result.streamsDeduplicated does not count the masked pair - so transparency is not silently changed.",
+        "Given the dedup signature key set, when a byte-identical stream pair differs on /SMask, /Mask, /Type or /Intent, then that difference is part of the signature and prevents the merge, while a byte-identical pair that also matches on these keys (e.g. neither carries /SMask) still deduplicates with streamsDeduplicated>=1.",
+        "Given the existing dedup tests, when the signature fix lands, then the P2-T6 distinct_duplicate_streams test (streamsDeduplicated>=1 with defaults, ==0 with --no-dedup) and the P1-T3 shared-XObject checks still pass."
+      ],
+      "tests": [
+        {
+          "test_id": "P2-T10-T01",
+          "linked_acceptance_criterion": "Given two byte-identical indirect image streams that match on every existing signature key (/Subtype /Width /Height /ColorSpace /BitsPerComponent /Filter /DecodeParms) but differ in that one carries an /SMask (or /Mask), when optimized with defaults (deduplicateStreams=true), then the two streams are NOT deduplicated - no referrer is repointed, both stream objects remain, and result.streamsDeduplicated does not count the masked pair - so transparency is not silently changed.",
+          "type": "integration",
+          "description": "Add a masked-duplicate fixture (two referenced image XObjects with identical raw bytes, one carrying /SMask) and TEST(StructureWriter, MaskedStreamsNotDeduplicated): optimize with defaults, assert both image streams remain and the masked pair is not merged, with QPDF().processFile clean.",
+          "expected_result": "Masked pair never merged; transparency preserved; output valid."
+        },
+        {
+          "test_id": "P2-T10-T02",
+          "linked_acceptance_criterion": "Given the dedup signature key set, when a byte-identical stream pair differs on /SMask, /Mask, /Type or /Intent, then that difference is part of the signature and prevents the merge, while a byte-identical pair that also matches on these keys (e.g. neither carries /SMask) still deduplicates with streamsDeduplicated>=1.",
+          "type": "integration",
+          "description": "Optimize the P2-T6 distinct_duplicate_streams fixture (neither stream carries /SMask); assert streamsDeduplicated>=1, proving the added keys gate only differing pairs rather than disabling dedup wholesale.",
+          "expected_result": "Matching pairs still dedup (>=1); added keys only prevent mismatched merges."
+        },
+        {
+          "test_id": "P2-T10-T03",
+          "linked_acceptance_criterion": "Given the existing dedup tests, when the signature fix lands, then the P2-T6 distinct_duplicate_streams test (streamsDeduplicated>=1 with defaults, ==0 with --no-dedup) and the P1-T3 shared-XObject checks still pass.",
+          "type": "integration",
+          "description": "Re-run ctest -R StructureWriter; assert DedupCountedWithDefaultsZeroWithout, DefaultOutputNotLargerThanNoOpt and AllOutputsPassQpdfCheck still pass.",
+          "expected_result": "Existing dedup tests green after the signature change."
+        }
+      ],
+      "expected_artifacts": [
+        "src/core/PDFOptimizer.cpp (dedup signature keyed on /SMask, /Mask, /Type, /Intent)",
+        "tests/test_structure_writer.cpp (masked-pair regression test)",
+        "tests/test_corpus_generator.h (masked-duplicate fixture declaration)",
+        "tests/test_corpus_generator.cpp (masked-duplicate fixture implementation)"
+      ],
+      "touches_files": [
+        "src/core/PDFOptimizer.cpp",
+        "tests/test_structure_writer.cpp",
+        "tests/test_corpus_generator.h",
+        "tests/test_corpus_generator.cpp"
+      ],
+      "inputs": [
+        "ESC-015 diagnosis (signature omits /SMask, /Mask, /Type, /Intent)",
+        "src/core/PDFOptimizer.cpp:516-572 dedup loop + signature",
+        "P2-T6 generateDistinctDuplicateStreams() fixture pattern"
+      ],
+      "outputs": [
+        "Alpha-safe dedup signature",
+        "Masked-pair regression fixture + test"
+      ],
+      "status": "done",
+      "size": "M",
+      "context": {
+        "read_files": [
+          {
+            "path": "src/core/PDFOptimizer.cpp",
+            "lines": "516-572",
+            "why": "dedup loop + signature key set to extend with /SMask /Mask /Type /Intent"
+          },
+          {
+            "path": "tests/test_structure_writer.cpp",
+            "lines": "32-111",
+            "why": "existing dedup test to keep passing; add the masked-pair regression"
+          },
+          {
+            "path": "tests/test_corpus_generator.cpp",
+            "lines": "260-330",
+            "why": "generateTransparency/generateSharedXObject SMask fixture pattern to model the masked-duplicate fixture"
+          },
+          {
+            "path": "tests/test_corpus_generator.h",
+            "lines": "1-47",
+            "why": "generator API to add the masked-duplicate fixture method"
+          },
+          {
+            "path": "docs/requirements/requirements.md",
+            "lines": "519-549",
+            "why": "AC-C5 dedup contract (matching signatures; both streams referenced)"
+          }
+        ],
+        "contracts": [
+          "signature keys [existing PDFOptimizer.cpp:527-535]: /Subtype /Width /Height /ColorSpace /BitsPerComponent /Filter /DecodeParms + FNV-1a hash over raw bytes; ADD /SMask, /Mask, /Type, /Intent (any differing key prevents the merge)",
+          "keep the objGen != guard and the per-pair try/catch  [existing PDFOptimizer.cpp:552-568; AC-C5]",
+          "ReferenceRewriter::repointAll(pdf, duplicateObjGen, kept)  [existing src/core/ReferenceRewriter.h] - only invoked for genuine duplicates",
+          "streamsDeduplicated >= 1 with defaults / == 0 with --no-dedup on the matching distinct_duplicate_streams fixture  [AC-C5; must remain true]",
+          "two byte-identical streams differing only by /SMask must NOT merge (AC-C2: alpha never mishandled)"
+        ],
+        "architecture_excerpt": "| Stream dedup replace path | [new/changed] | Replaces the inert ESC-001 isIndirect() skip and the replaceObject call with a reference-rewriting path: for each duplicate stream A byte-identical to kept B, repoint every reference to A to B, then let A drop under the already-set setPreserveUnreferencedObjects(false). Retains the byte-identical signature detection (FNV hash + five dict keys), the objGen != guard and per-pair try/catch; streamsDeduplicated now increments for distinct byte-identical indirect streams (AC-C5, Phase 2). replaceObject is no longer called - it cannot alias duplicate streams. |",
+        "plan_excerpt": "- Product fix (reference-rewriting): in src/core/PDFOptimizer.cpp replace the inert ESC-001 indirect-handle skip and the replaceObject call with a reference-rewriting path - a new ReferenceRewriter helper walks every object (pdf.getAllObjects() + trailer) and its direct nested dicts/arrays, finds every indirect reference to the duplicate's objGen, and repoints it to the kept object via replaceKey / setArrayItem; the now-unreferenced duplicate then drops under the already-set setPreserveUnreferencedObjects(false). Keep the byte-identical signature detection (FNV hash + the five dict keys), the objGen != guard, and the per-pair try/catch.",
+        "requirement_ids": [
+          "AC-C5",
+          "AC-C2",
+          "S1"
+        ],
+        "test_command": "ctest --test-dir build -R StructureWriter --output-on-failure",
+        "memory_notes": [],
+        "graph_excerpt": "",
+        "needs_graphify": false,
+        "size": "M"
+      }
+    },
+    {
+      "id": "P2-T11",
+      "title": "Phase 2 close-out: drop stale libpng labelling in PngCodec.h + USAGE.md (ESC-016, cosmetic only; libpng dependency RETAINED)",
+      "description": "After P2-T9 switched PngCodec to a plain zlib encoder, the libpng labelling is stale. Update the PngCodec.h class comment and name() so the codec is described as what it is (a lossless zlib/Flate encoder; class name retained per AC-C2), and update the three USAGE.md libpng references. Labelling/documentation only - no codec behaviour change and NO build-dependency change: libpng stays declared in vcpkg.json and linked in CMakeLists.txt (a genuinely unused but RETAINED dependency; removing it is a separate cleanup that requires a flagged change to the hard-constraint tech stack, out of ESC-016's cosmetic scope).",
+      "agent": "build_worker",
+      "task_type": "doc",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Given src/codecs/PngCodec.h, when it is read after the change, then the class doc comment describes a lossless zlib/Flate encoder and no longer contains the word 'libpng', and name() returns a label identifying the zlib/Flate implementation (not the string 'libpng', e.g. 'flate'), while the PngCodec class name is retained so m_pngCodec stays reachable per AC-C2.",
+        "Given USAGE.md, when the supported-codecs overview, the build-dependency list, and the source-tree codec table are read, then none of the three former libpng mentions remain (the file contains no 'libpng'), and the PNG/alpha lossless path is described as flowing through a zlib/Flate encoder.",
+        "Given the change is documentation/labelling-only, when the project is re-configured, built, and the full ctest suite is run, then all tests pass (62/62 at time of writing) with no regression, AND libpng remains declared in vcpkg.json and linked in CMakeLists.txt (the dependency is intentionally RETAINED and must NOT be removed by this task)."
+      ],
+      "tests": [
+        {
+          "test_id": "P2-T11-T01",
+          "linked_acceptance_criterion": "Given src/codecs/PngCodec.h, when it is read after the change, then the class doc comment describes a lossless zlib/Flate encoder and no longer contains the word 'libpng', and name() returns a label identifying the zlib/Flate implementation (not the string 'libpng', e.g. 'flate'), while the PngCodec class name is retained so m_pngCodec stays reachable per AC-C2.",
+          "type": "manual",
+          "description": "Run `grep -n 'libpng' src/codecs/PngCodec.h` (expect no output) and read src/codecs/PngCodec.h:7 and :10: the doc comment must describe a lossless zlib/Flate encoder and name() must return a non-'libpng' label (e.g. \"flate\"); confirm the class is still `class PngCodec`.",
+          "expected_result": "PngCodec.h contains no 'libpng'; comment names the zlib/Flate lossless encoder; name() != \"libpng\"; class name PngCodec unchanged."
+        },
+        {
+          "test_id": "P2-T11-T02",
+          "linked_acceptance_criterion": "Given USAGE.md, when the supported-codecs overview, the build-dependency list, and the source-tree codec table are read, then none of the three former libpng mentions remain (the file contains no 'libpng'), and the PNG/alpha lossless path is described as flowing through a zlib/Flate encoder.",
+          "type": "manual",
+          "description": "Run `grep -n 'libpng' USAGE.md` (expect no output) and inspect the three former locations (codec overview ~L16, linked-library list ~L60, source-tree codec table ~L305): each must now describe the PNG/alpha lossless path via the zlib/Flate encoder.",
+          "expected_result": "No 'libpng' remains in USAGE.md; the three former references are updated to the zlib/Flate implementation."
+        },
+        {
+          "test_id": "P2-T11-T03",
+          "linked_acceptance_criterion": "Given the change is documentation/labelling-only, when the project is re-configured, built, and the full ctest suite is run, then all tests pass (62/62 at time of writing) with no regression, AND libpng remains declared in vcpkg.json and linked in CMakeLists.txt (the dependency is intentionally RETAINED and must NOT be removed by this task).",
+          "type": "integration",
+          "description": "Run `grep -n 'libpng' src/codecs/PngCodec.h USAGE.md` (expect no output); then `cmake -B build -DCMAKE_TOOLCHAIN_FILE=third_party/vcpkg/scripts/buildsystems/vcpkg.cmake && cmake --build build` and `ctest --test-dir build --output-on-failure`; confirm configure/build succeed and the full suite is green (62 tests at time of writing). Confirm libpng is RETAINED: `grep -n 'libpng' vcpkg.json` and `grep -nE 'PNG::|find_package\\(PNG' CMakeLists.txt` must still match (the dependency is intentionally kept, not removed).",
+          "expected_result": "No 'libpng' in PngCodec.h/USAGE.md; configure/build succeed; full ctest suite passes 62/62; libpng still present in vcpkg.json and CMakeLists.txt."
+        },
+        {
+          "test_id": "P2-T11-T04",
+          "linked_acceptance_criterion": "Given the change is documentation/labelling-only, when the project is re-configured, built, and the full ctest suite is run, then all tests pass (62/62 at time of writing) with no regression, AND libpng remains declared in vcpkg.json and linked in CMakeLists.txt (the dependency is intentionally RETAINED and must NOT be removed by this task).",
+          "type": "integration",
+          "description": "Run `ctest --test-dir build -R 'CodecTest|DecisionEngine|PDFOptimizerTest|StructureWriter' --output-on-failure` to confirm the name()/comment change causes no codec, routing, optimizer or dedup regression.",
+          "expected_result": "CodecTest, DecisionEngine, PDFOptimizerTest and StructureWriter suites all pass."
+        }
+      ],
+      "expected_artifacts": [
+        "src/codecs/PngCodec.h (comment + name() updated; class name retained)",
+        "USAGE.md (three libpng references updated)"
+      ],
+      "touches_files": [
+        "src/codecs/PngCodec.h",
+        "USAGE.md"
+      ],
+      "inputs": [
+        "ESC-016 diagnosis (stale libpng labelling / comment)",
+        "src/codecs/PngCodec.h:7 and :10",
+        "USAGE.md:16, :60, :305",
+        "src/codecs/PngCodec.cpp (zlib.h compress2, no libpng symbol)",
+        "Narrowing decision (2026-10-07): libpng is RETAINED in vcpkg.json:6 and CMakeLists.txt:16,:76 - NOT removed (requirements.md:29 hard-constraint stack; removal needs a flagged requirements change + Validator architecture refresh, deferred as a separate cleanup)"
+      ],
+      "outputs": [
+        "Accurate PngCodec labelling and USAGE.md docs (zlib/Flate)",
+        "libpng dependency retained unchanged in vcpkg.json and CMakeLists.txt",
+        "configure + build + full ctest green (62/62)"
+      ],
+      "status": "done",
+      "size": "S",
+      "context": {
+        "read_files": [
+          {
+            "path": "src/codecs/PngCodec.h",
+            "lines": "1-16",
+            "why": "the class doc comment (:7) and name() (:10) to update; class name retained"
+          },
+          {
+            "path": "USAGE.md",
+            "lines": "10-20",
+            "why": "supported-codecs overview mention (former :16)"
+          },
+          {
+            "path": "USAGE.md",
+            "lines": "55-65",
+            "why": "build/linked-library list mention (former :60)"
+          },
+          {
+            "path": "USAGE.md",
+            "lines": "298-312",
+            "why": "source-tree codec table mention (former :305)"
+          },
+          {
+            "path": "src/codecs/PngCodec.cpp",
+            "lines": "1-25",
+            "why": "confirm the encoder now uses <zlib.h> compress2 with no libpng symbol - evidence for the doc wording"
+          },
+          {
+            "path": "docs/requirements/requirements.md",
+            "lines": "25-33",
+            "why": "hard-constraint tech stack lists libpng at :29 - why the dependency is RETAINED, not removed"
+          },
+          {
+            "path": "docs/code_review/escalations.json",
+            "lines": "110-119",
+            "why": "ESC-016 scope and expected outcome (read-only; Code Reviewer owns it)"
+          },
+          {
+            "path": "docs/architecture.md",
+            "lines": "50-70",
+            "why": "stale codec-layer / libpng rows (context only - Validator-owned, do NOT edit)"
+          }
+        ],
+        "contracts": [
+          "class PngCodec : public ImageCodec  [existing; class name retained per AC-C2 - do not rename the class or its m_pngCodec references]",
+          "std::string PngCodec::name() const override  [existing, src/codecs/PngCodec.h:10; currently returns \"libpng\"; must return a non-\"libpng\" label for the zlib/Flate implementation, e.g. \"flate\"]",
+          "PngCodec::encode(...) emits a plain zlib stream via compress2()  [existing, P2-T9; includes <zlib.h>; no libpng / png_* symbol]",
+          "vcpkg.json dependencies [existing]: qpdf, libpng, libjpeg-turbo, openjpeg, libdeflate, gtest -> KEEP \"libpng\". This task MUST NOT edit vcpkg.json.",
+          "CMakeLists.txt:16 find_package(PNG REQUIRED) and CMakeLists.txt:76 PNG::PNG  [existing; KEEP both - libpng is a RETAINED dependency. This task MUST NOT edit CMakeLists.txt. ZLIB stays at :21/:78.]",
+          "Why retained (2026-10-07 narrowing): libpng is genuinely unused (PngCodec uses zlib since P2-T9) but requirements.md:29 lists libpng in the hard-constraint tech stack and architecture.md names it in 6 places; removing it is NOT cosmetic - it forces a flagged requirements change + Validator architecture refresh (a 2-agent cascade). Deferred as a separate cleanup, explicitly OUT of ESC-016 scope. This task only stops the code/docs from claiming a libpng dependency.",
+          "Pre-verified: no file under src/ or tests/ includes png.h or references png_* symbols; .name() is not asserted by any test, so changing name() breaks no test"
+        ],
+        "architecture_excerpt": "| **Codec layer** [existing] | `src/codecs/JpegCodec.cpp`, `PngCodec.cpp`, `Jp2Codec.cpp`, `ZlibCodec.cpp`, `CodecInterface.h` | `ImageCodec::encode(pixels, CompressionParams)->bytes`: JPEG via TurboJPEG `tjCompress2`, JP2 via OpenJPEG codestream, PNG via libpng, Zlib via `compress2` level 9 / libdeflate |\n| **libpng** [existing] | PNG encode (dead code until Phase 2 wires it) |\n| **libjpeg-turbo / OpenJPEG / libpng / zlib / libdeflate** | [existing] | Codec impl. No change. |\n(NOTE: the code-behaviour rows are stale after P2-T9 moved PNG encode to zlib; the libpng dependency itself is RETAINED by this task. These rows are Validator-owned and are NOT edited by this task.)",
+        "plan_excerpt": "- **Goal:** Scope slider to lossy classes, wire PNG for alpha/lossless, preserve CMYK correctly with opt-in transcode, and activate stream dedup via **reference-rewriting** (replace the inert ESC-001 guard with a cycle-safe referrer walk that repoints references to the kept duplicate, then lets the duplicate drop - `replaceObject` cannot alias duplicate streams; see Scope).\n- **Scope:** `DecisionEngine.cpp` branch rework (lossy-only slider; PNG branch; ScannedText profile-driven, Monochrome always lossless); new `CmykHandler` ...; USAGE.md slider/profile/CMYK docs. **Plus the AC-C5 structural stream-dedup activation:**",
+        "requirement_ids": [
+          "AC-C2",
+          "S1",
+          "S8"
+        ],
+        "test_command": "ctest --test-dir build --output-on-failure",
+        "memory_notes": [],
+        "graph_excerpt": "grep-verified (not graphify), 2026-10-07 after narrowing: no png.h / png_* symbol in src/ or tests/. libpng literal appears in src/codecs/PngCodec.h:7,:10 (this task - edit), src/codecs/CodecInterface.h:38 (doc example, out of ESC-016 scope, not edited), src/codecs/PngCodec.cpp:14 (historical comment, accurate, kept), USAGE.md:16,:60,:305 (this task - edit), vcpkg.json:6 (RETAINED - not edited), CMakeLists.txt:16,:76 (RETAINED - not edited). .name() is not called anywhere in src/, tools/ or tests/.",
+        "needs_graphify": false,
+        "size": "S"
+      }
+    },
+    {
+      "id": "P2-T12",
+      "title": "Phase 2 close-out residual: refresh stale 'libpng' codec-name example in CodecInterface.h name() doc comment (ESC-017)",
+      "description": "The only remaining stale 'libpng' reference in code/docs is the illustrative example in the ImageCodec::name() doc comment at src/codecs/CodecInterface.h:38, which lists \"libpng\" even though no codec returns it (P2-T11 relabelled PngCodec to \"flate\"). Update that example so it lists codec-name strings actual implementations return (JpegCodec \"TurboJPEG\", Jp2Codec \"OpenJPEG\", ZlibCodec \"zlib\", PngCodec \"flate\"). Documentation-only: no codec behaviour, interface, test or dependency change; class names unchanged and the libpng build dependency stays retained (P2-T11).",
+      "agent": "build_worker",
+      "task_type": "doc",
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Given src/codecs/CodecInterface.h, when the ImageCodec::name() doc comment (line 38) is read after the change, then it no longer contains the token \"libpng\", and the codec-name examples it lists correspond to strings actual codecs return (JpegCodec \"TurboJPEG\", Jp2Codec \"OpenJPEG\", ZlibCodec \"zlib\", PngCodec \"flate\") - no codec-name example cites a value no implementation produces.",
+        "Given the change is documentation/comment-only, when the project is built and the full ctest suite is run from the repo root, then all tests pass (62/62 at time of writing) with no regression and no change to codec behaviour, the ImageCodec interface, or class names."
+      ],
+      "tests": [
+        {
+          "test_id": "P2-T12-T01",
+          "linked_acceptance_criterion": "Given src/codecs/CodecInterface.h, when the ImageCodec::name() doc comment (line 38) is read after the change, then it no longer contains the token \"libpng\", and the codec-name examples it lists correspond to strings actual codecs return (JpegCodec \"TurboJPEG\", Jp2Codec \"OpenJPEG\", ZlibCodec \"zlib\", PngCodec \"flate\") - no codec-name example cites a value no implementation produces.",
+          "type": "manual",
+          "description": "Run `grep -n 'libpng' src/codecs/CodecInterface.h` (expect no output) and read src/codecs/CodecInterface.h:38: the name() doc comment must not contain \"libpng\" and its examples must list only codec-name strings actual codecs return (e.g. \"TurboJPEG\", \"OpenJPEG\", \"zlib\"/\"flate\"). Cross-check against the name() returns at JpegCodec.h:10, Jp2Codec.h:10, ZlibCodec.h:9, PngCodec.h:10.",
+          "expected_result": "CodecInterface.h contains no 'libpng'; the name() example cites only real codec-name strings."
+        },
+        {
+          "test_id": "P2-T12-T02",
+          "linked_acceptance_criterion": "Given the change is documentation/comment-only, when the project is built and the full ctest suite is run from the repo root, then all tests pass (62/62 at time of writing) with no regression and no change to codec behaviour, the ImageCodec interface, or class names.",
+          "type": "integration",
+          "description": "Run `cmake --build build` then `ctest --test-dir build --output-on-failure` from the repo root; confirm the full suite passes (62/62 at time of writing) with no regression (a header comment touch only forces a rebuild).",
+          "expected_result": "Full ctest suite green (62/62); no behaviour change."
+        },
+        {
+          "test_id": "P2-T12-T03",
+          "linked_acceptance_criterion": "Given the change is documentation/comment-only, when the project is built and the full ctest suite is run from the repo root, then all tests pass (62/62 at time of writing) with no regression and no change to codec behaviour, the ImageCodec interface, or class names.",
+          "type": "integration",
+          "description": "Run `ctest --test-dir build -R CodecTest --output-on-failure` to confirm the codec suite (incl. CodecTest.PngEncodeIsFlateDecodable) is unaffected by the CodecInterface.h doc-comment edit.",
+          "expected_result": "CodecTest suite passes; codec behaviour unchanged by the doc-comment edit."
+        }
+      ],
+      "expected_artifacts": [
+        "src/codecs/CodecInterface.h (name() doc-comment example refreshed; comment-only)"
+      ],
+      "touches_files": [
+        "src/codecs/CodecInterface.h"
+      ],
+      "inputs": [
+        "ESC-017 diagnosis (stale 'libpng' codec-name example at src/codecs/CodecInterface.h:38)",
+        "P2-T11 codec-name labels: JpegCodec 'TurboJPEG', Jp2Codec 'OpenJPEG', ZlibCodec 'zlib', PngCodec 'flate'"
+      ],
+      "outputs": [
+        "CodecInterface.h name() doc-comment example listing only real codec-name strings",
+        "Full ctest green (62/62), no behaviour change"
+      ],
+      "status": "done",
+      "size": "S",
+      "context": {
+        "read_files": [
+          {
+            "path": "src/codecs/CodecInterface.h",
+            "lines": "33-47",
+            "why": "name() doc comment (:38) to update; ImageCodec interface"
+          },
+          {
+            "path": "src/codecs/JpegCodec.h",
+            "lines": "1-14",
+            "why": "name() returns 'TurboJPEG' (example to keep)"
+          },
+          {
+            "path": "src/codecs/Jp2Codec.h",
+            "lines": "1-14",
+            "why": "name() returns 'OpenJPEG' (example to keep)"
+          },
+          {
+            "path": "src/codecs/ZlibCodec.h",
+            "lines": "1-14",
+            "why": "name() returns 'zlib' (candidate replacement example)"
+          },
+          {
+            "path": "src/codecs/PngCodec.h",
+            "lines": "1-14",
+            "why": "name() returns 'flate' (replaces the stale 'libpng' example)"
+          }
+        ],
+        "contracts": [
+          "/// Returns the name of the codec (e.g., \"TurboJPEG\", \"libpng\", \"OpenJPEG\").  [existing src/codecs/CodecInterface.h:38; replace the stale \"libpng\" token - no codec returns it]",
+          "virtual std::string name() const = 0;  [existing src/codecs/CodecInterface.h:39; interface unchanged - comment-only edit]",
+          "Actual codec-name returns: JpegCodec \"TurboJPEG\" (JpegCodec.h:10), Jp2Codec \"OpenJPEG\" (Jp2Codec.h:10), ZlibCodec \"zlib\" (ZlibCodec.h:9), PngCodec \"flate\" (PngCodec.h:10)  [existing]",
+          "Documentation-only: no behaviour, test, architecture or dependency change; class names retained (PngCodec per AC-C2). The libpng build dependency is RETAINED (P2-T11) - vcpkg.json/CMakeLists.txt are NOT touched."
+        ],
+        "architecture_excerpt": "| **Codec layer** [existing] | `src/codecs/JpegCodec.cpp`, `PngCodec.cpp`, `Jp2Codec.cpp`, `ZlibCodec.cpp`, `CodecInterface.h` | `ImageCodec::encode(pixels, CompressionParams)\u2192bytes`: JPEG via TurboJPEG `tjCompress2`, JP2 via OpenJPEG codestream, PNG via libpng, Zlib via `compress2` level 9 / libdeflate |",
+        "plan_excerpt": "- **Scope:** `DecisionEngine.cpp` branch rework (lossy-only slider; PNG branch; ScannedText profile-driven, Monochrome always lossless); new `CmykHandler` (ICC/DeviceCMYK preserve + Adobe APP14 safety + skip-with-reason logging; opt-in transcode with internal \u0394E sampling); `run_optimize --transcode-cmyk-to-rgb`; GUI checkbox; USAGE.md slider/profile/CMYK docs.",
+        "requirement_ids": [
+          "AC-C2",
+          "S8"
+        ],
+        "test_command": "ctest --test-dir build --output-on-failure",
+        "memory_notes": [],
+        "graph_excerpt": "grep-verified 2026-10-07 (P2-T12): src/codecs/CodecInterface.h:38 is the only remaining 'libpng' example in code; codec name() returns are TurboJPEG/OpenJPEG/zlib/flate; .name() is not called anywhere in src/, tools/ or tests/.",
+        "needs_graphify": false,
+        "size": "S"
       }
     }
   ]

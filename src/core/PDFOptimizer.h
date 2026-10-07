@@ -24,6 +24,11 @@ struct OptimizationOptions {
     bool recompressFlate = true;     // Level 9 Flate recompression
     bool deduplicateStreams = true;  // Content-hash stream deduplication
 
+    // Opt-in CMYK->RGB transcode (AC-C3b). OFF by default so DeviceCMYK /
+    // ICCBased-CMYK images are preserved byte-for-byte; when enabled the
+    // optimizer converts them to DeviceRGB and re-encodes as JPEG.
+    bool transcodeCmykToRgb = false;
+
     static OptimizationOptions forProfile(CompressionProfile prof) {
         OptimizationOptions opts;
         opts.profile = prof;
@@ -75,6 +80,12 @@ struct OptimizationResult {
     int imagesSkipped = 0;
     int imagesKeptOriginal = 0;
     size_t imageBytesSaved = 0;
+    // CMYK (DeviceCMYK / ICCBased-CMYK) images are preserved byte-for-byte
+    // rather than re-encoded; this counts how many took that path.
+    int cmykPreserved = 0;
+    // Number of CMYK images converted to RGB under the opt-in
+    // transcodeCmykToRgb option (AC-C3b).
+    int transcodedCmyk = 0;
 
     // Stripping breakdown
     int linksRemoved = 0;

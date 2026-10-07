@@ -498,9 +498,18 @@ TEST(CorpusGenerator, BenchmarkTsvSsimThresholds) {
         static_cast<int>(std::distance(cols.begin(), std::find(cols.begin(), cols.end(), "SSIM")));
     ASSERT_LT(ssimIdx, static_cast<int>(cols.size())) << "no SSIM column";
 
+    // The TSV is a multi-tool matrix (pdfcompress, qpdf, gs_ebook, gs_screen,
+    // ocrmypdf). The >=0.98 gate is a product-quality contract for our own
+    // tool only; third-party rows are informational and must not fail the
+    // product verifier.
+    const auto toolIdx =
+        static_cast<int>(std::distance(cols.begin(), std::find(cols.begin(), cols.end(), "Tool")));
+    ASSERT_LT(toolIdx, static_cast<int>(cols.size())) << "no Tool column";
+
     // SSIM quality threshold for Balanced/MaxQuality on synthetic corpus.
     constexpr double kMinSsim = 0.98;
     int numericRows = 0;
+    int pdfcompressRows = 0;
     std::string line;
     while (std::getline(tsv, line)) {
         if (line.empty()) {
@@ -512,23 +521,33 @@ TEST(CorpusGenerator, BenchmarkTsvSsimThresholds) {
         while (std::getline(ss, cell, '\t')) {
             cells.push_back(cell);
         }
-        if (ssimIdx >= static_cast<int>(cells.size())) {
+        if (ssimIdx >= static_cast<int>(cells.size()) ||
+            toolIdx >= static_cast<int>(cells.size())) {
             continue;
         }
         const std::string& ssimCell = cells[static_cast<size_t>(ssimIdx)];
+        const std::string& toolCell = cells[static_cast<size_t>(toolIdx)];
         if (ssimCell == "N/A" || ssimCell == "n/a" || ssimCell.empty()) {
             continue;  // N/A allowed when PDFium/render_diff output missing.
         }
         try {
             const double ssim = std::stod(ssimCell);
             ++numericRows;
-            EXPECT_GE(ssim, kMinSsim)
-                << "SSIM below 0.98 threshold in " << newest.string() << ": " << line;
+            // Gate only our own tool; third-party sub-0.98 rows are allowed.
+            if (toolCell == "pdfcompress") {
+                ++pdfcompressRows;
+                EXPECT_GE(ssim, kMinSsim)
+                    << "SSIM below 0.98 threshold for pdfcompress in "
+                    << newest.string() << ": " << line;
+            }
         } catch (...) {
             // Non-numeric placeholder (e.g. SKIPPED/FAILED) — not a score.
         }
     }
     if (numericRows == 0) {
         SUCCEED() << "All SSIM values N/A (PDFium unavailable); header check passed";
+    } else {
+        SUCCEED() << "Scored " << numericRows << " numeric SSIM row(s); gated "
+                  << pdfcompressRows << " pdfcompress row(s) at >= " << kMinSsim;
     }
 }

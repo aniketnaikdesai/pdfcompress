@@ -287,7 +287,16 @@ ImageClassification ImageAnalyzer::classify(const AnalysisResult& r,
         return ImageClassification::Monochrome;
     }
 
-    // --- Rule 2: Scanned text ---
+    // --- Rule 2: DeviceGray scanned document ---
+    // A /DeviceGray image (single channel) that is not pure monochrome is a
+    // grayscale scan / document page. Classify it as ScannedText so it takes
+    // the lossless document path and the quality slider is ignored.
+    if (meta.colorSpace == ColorSpace::DeviceGray &&
+        r.uniqueColorsSampled > 4) {
+        return ImageClassification::ScannedText;
+    }
+
+    // --- Rule 3: Scanned text ---
     // Grayscale, moderate entropy, strong edges (text has lots of edges),
     // high DPI typical of scans (>= 200 DPI)
     if (r.isEffectivelyGrayscale &&
@@ -297,7 +306,7 @@ ImageClassification ImageAnalyzer::classify(const AnalysisResult& r,
         return ImageClassification::ScannedText;
     }
 
-    // --- Rule 3: Screenshot / UI graphics ---
+    // --- Rule 4: Screenshot / UI graphics ---
     // Low unique colors relative to resolution, many flat regions,
     // very low entropy (large areas of solid color)
     if (r.uniqueColorsSampled < 1000 &&
@@ -306,7 +315,7 @@ ImageClassification ImageAnalyzer::classify(const AnalysisResult& r,
         return ImageClassification::Screenshot;
     }
 
-    // --- Rule 4: Line art ---
+    // --- Rule 5: Line art ---
     // High edge density, lots of flat regions, limited color palette
     if (r.edgeDensity > 0.25f &&
         r.flatRegionRatio > 0.4f &&
@@ -314,7 +323,7 @@ ImageClassification ImageAnalyzer::classify(const AnalysisResult& r,
         return ImageClassification::LineArt;
     }
 
-    // --- Rule 5: Photo (default) ---
+    // --- Rule 6: Photo (default) ---
     // High entropy, high unique color count = natural photographic content
     if (r.entropy > 5.5f || r.uniqueColorsSampled > 10000) {
         return ImageClassification::Photo;

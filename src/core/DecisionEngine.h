@@ -20,12 +20,19 @@ public:
     /// @param channels Number of color channels (1, 3, or 4).
     /// @param analysis The classification result from Phase 3.
     /// @param outFilter The PDF stream filter that should be used for the resulting bytes (e.g. DCTDecode).
+    /// @param qualityHint Optional user quality slider (0-100); ignored by lossless classifications.
+    /// @param hasAlpha True when the source image carries an /SMask or /Mask (forces the lossless PNG branch).
+    /// @param bitsPerComponent Source bit depth (e.g. 1 for 1-bit scans).
+    /// @param colorSpace Source color space.
     /// @return The compressed byte stream, or empty on failure.
     std::vector<uint8_t> compress(const uint8_t* pixels, 
                                   int width, int height, int channels,
                                   const AnalysisResult& analysis,
                                   StreamFilter& outFilter,
-                                  int qualityHint = 0);
+                                  int qualityHint = 0,
+                                  bool hasAlpha = false,
+                                  int bitsPerComponent = 8,
+                                  ColorSpace colorSpace = ColorSpace::Unknown);
 
 private:
     CompressionProfile m_profile;

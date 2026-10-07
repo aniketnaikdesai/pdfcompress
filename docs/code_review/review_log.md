@@ -868,3 +868,493 @@ cited lines fully answer every question. `GRAPH_REPORT.md` was not read.
 - No new findings. No open escalations remain.
 
 Status: REVIEW_COMPLETE
+
+## Phase 2 review — P2-T1..P2-T6 done, P2-T7 blocked (2026-10-07)
+
+Incremental scope: everything since the last `Status: REVIEW_COMPLETE` (Phase 1
+close-out re-verification). Under review: P2-T1..P2-T6 (`done`) and P2-T7
+(`blocked`). Read: `docs/build/build_log.md` (Waves 14–21, terminal
+`Status: NEEDS_CODE_REVIEW`), `docs/build/failures.json` (P2-T7),
+`docs/build/results/_archive/wave{14,15,16,17,18,20,21}_P2-T*.json`,
+`docs/build/logs/P2-T*.md`, `docs/tasks/task-graph.json` (Phase 2 graph),
+`docs/requirements/requirements.md` Part II (AC-C1..C5, J-C1/J-C2, S1–S9),
+`docs/architecture.md`/`docs/plan.md` Phase 2 rows, the `git diff HEAD` for every
+changed src/test/benchmark file, and reviewer-run `ctest`, `run_optimize`,
+`render_diff`, `qpdf --check`, plus two reviewer-built standalone probes against
+`libpdfcompress_core.a` (PNG/Flate embed + alpha path). Prior escalations
+ESC-007..ESC-010 remain `addressed` (spot-checked; nothing regresses them).
+
+Graphify note: `graphify-out/graph.json` exists but was not needed — the diffs,
+results JSON, and direct source reads fully answered every question (the one
+cross-file interaction, DecisionEngine↔PngCodec↔PDFOptimizer, was read directly
+and confirmed with a live probe). `GRAPH_REPORT.md` was not read.
+
+### F-0201 — P2-T1: lossless FlateDecode branch embeds a PNG file (ESC-011, blocking)
+
+- linked task: P2-T1; category: `bug`; root-cause classification: `code_bug`;
+  severity: `blocking`.
+- Evidence (reviewer-reproduced, not from the worker report): the `hasAlpha`
+  branch (`src/core/DecisionEngine.cpp:46-50`) and the Screenshot/LineArt
+  MaxQuality-no-slider branch (`:72-73`) select `m_pngCodec` and report
+  `StreamFilter::FlateDecode`. `PngCodec::encode` (`src/codecs/PngCodec.cpp:61-92`)
+  writes a complete PNG container (`png_write_info`/`png_write_end` → `0x89 'PNG'`
+  + IHDR/IDAT/IEND), which is **not** a zlib/Flate stream. PDFOptimizer stores
+  those bytes with `/Filter /FlateDecode` (`src/core/PDFOptimizer.cpp:478-490`).
+  A direct `DecisionEngine::compress(..., hasAlpha=true)` probe returns
+  `outFilter = FlateDecode` with bytes starting `89 50 4e 47`; a full
+  `PDFOptimizer::optimize` probe on an alpha image whose PNG re-encode is smaller
+  than its source Flate stream reports `imagesOptimized=1` and writes an output
+  image stream with `/Filter /FlateDecode` and PNG bytes, on which
+  `qpdf --check` reports `error decoding stream data for object 6 0: stream
+  inflate: incorrect header check`.
+- Why the tests miss it: `PDFOptimizerTest.TransparencyBaseImageStaysFlateDecode`
+  only asserts the output `/Filter` is `/FlateDecode`; on `transparency.pdf` the
+  source Flate stream is 680 B vs a 1052 B PNG output, so the image is
+  `kept-original` (`imagesOptimized=0`) and the buggy branch never embeds. The
+  P2-T1 unit test (`PngSelectedForAlpha`) checks only the filter name and that
+  bytes are non-empty.
+- Why `code_bug` not `requirements_gap`: AC-C2 normatively requires the lossless
+  output to be "embeddable as a PDF /FlateDecode image stream"; the AC-C2 phrase
+  "FlateDecode-or-PNG" does not license a PNG container (PDF has no PNG filter).
+  The fix is in code (use `m_zlibCodec`, or make `PngCodec` emit zlib/IDAT).
+- routed: ESC-011 → BUILD.
+
+### F-0202 — P2-T7 T03: verifier SSIM gate over-strict (ESC-012, blocking)
+
+- linked task: P2-T7; category: `bug`; root-cause classification: `code_bug`;
+  severity: `blocking`.
+- Evidence (reviewer-reproduced): `ctest --test-dir build -R
+  CorpusGenerator.BenchmarkTsvSsimThresholds --output-on-failure` →
+  `tests/test_corpus_verifier.cpp:525 EXPECT_GE(ssim, kMinSsim) actual 0.9735 vs
+  0.98` on `large_uncompressed.pdf gs_ebook` and `gs_screen`. The test applies the
+  0.98 gate to **every** numeric row of the newest TSV regardless of Tool. The
+  newest TSV (`benchmark_results_20261007_173438.tsv`) has 39 files × 5 tools;
+  every `pdfcompress` row is ≥ 0.98 (min 0.9831), only the two Ghostscript rows
+  are below. `run_optimize`/product output is not at fault.
+- Why `code_bug`: the gate is the product-quality gate (comment at
+  `:501` "threshold for Balanced/MaxQuality on synthetic corpus") and must apply
+  to the product's rows; applying it to third-party tools is a test-authoring
+  defect. Reproducible, concrete fix (filter on Tool == `pdfcompress`, and/or
+  restrict to the canonical 14).
+- routed: ESC-012 → BUILD.
+
+### F-0203 — benchmark runs the whole corpus dir, not the canonical 14 (ESC-013, should-fix)
+
+- linked task: P2-T7; category: `bug`; root-cause classification: `code_bug`;
+  severity: `should-fix`.
+- Evidence: `benchmark/run_benchmark.sh:92` loops `"$CORPUS_DIR"/*.pdf`. The
+  shared `$TMPDIR/pdfcompress_test_corpus` dir holds 39 non-byproduct PDFs
+  (canonical 14 + non-canonical fixtures `large_uncompressed.pdf`,
+  `bitpacked_bpc1.pdf`, `distinct_duplicate_streams.pdf` + many test byproducts
+  such as `cmyk_image.pdf.cmyk_*.pdf`, `photo_heavy.pdf.check_*.pdf`,
+  `grayscale_scan.pdf.q70.pdf` that the skip patterns at `:94` do not match).
+  AC-C4 requires the comparison "on the same 14-file corpus". This is what feeds
+  the over-strict verifier (F-0202) and makes the AC-C4 delta noisy.
+- routed: ESC-013 → BUILD.
+
+### F-0204 — no Phase-2 task owns the verifier/benchmark fix (ESC-014, blocking, TASK_MANAGER)
+
+- linked task: P2-T7; category: `gap`; root-cause classification:
+  `bad_task_breakdown`; severity: `blocking`.
+- Evidence: P2-T7 `touches_files` is `["USAGE.md"]`, but its T03 gate requires a
+  green `ctest`; the failing file (`tests/test_corpus_verifier.cpp`) and the
+  contaminating loop (`benchmark/run_benchmark.sh`) are in **no** Phase-2 task's
+  `touches_files` (P2-T1..P2-T7). Re-dispatching P2-T7 cannot converge — same
+  pattern as Phase-0 ESC-004/ESC-005. The code fixes (F-0202/F-0203) need an owner
+  task, or the T03 gate needs an explicit carve-out for the Phase-0 verifier
+  artifact.
+- routed: ESC-014 → TASK_MANAGER.
+
+### F-0205 — dedup signature omits alpha keys (ESC-015, should-fix)
+
+- linked task: P2-T6; category: `quality`; root-cause classification: `code_bug`;
+  severity: `should-fix`.
+- Evidence: the dedup signature (`src/core/PDFOptimizer.cpp:527-535`) keys on
+  `/Subtype /Width /Height /ColorSpace /BitsPerComponent /Filter /DecodeParms`
+  + raw-bytes hash but omits `/SMask`, `/Mask`, `/Type`, `/Intent`. Two
+  byte-identical image streams differing only by carrying a mask collide and are
+  merged by `ReferenceRewriter::repointAll`; the non-alpha image's referrers then
+  point at the alpha object (or vice versa), silently changing transparency.
+  Trigger is profile-independent when both source streams are kept original, and
+  reachable under MaxQuality-no-slider when both are re-encoded identically.
+  AC-C2 requires alpha never be mishandled; the AC-C5 key list does not include
+  the alpha keys. The `objGen !=` guard and per-pair try/catch are correctly kept,
+  and the P2-T6 test (1 vs 2 image streams, `>=1`/`==0`) is sound.
+- routed: ESC-015 → BUILD.
+
+### Quality review of the done tasks (P2-T1..P2-T6)
+
+- **P2-T1** — routing rework is otherwise correct: slider only affects
+  Photo/Screenshot/LineArt; ScannedText→JPX and Monochrome→Flate ignore it;
+  defaulted `compress()` params keep existing callers compiling; 5/5 DecisionEngine
+  tests green. Only F-0201 (PNG/Flate) mars it.
+- **P2-T2** — `hasAlpha = hasKey("/SMask")||hasKey("/Mask")`; mask streams are
+  never enumerated by `page.getImages()` so `/SMask` is left intact (verified:
+  output SMask stream is valid zlib, geometry 200×150). `render_diff
+  transparency.pdf` → `SSIM 1.0000 PSNR INF`. But the integration test passes on
+  the `kept-original` path (see F-0201), so it does not exercise the new branch.
+- **P2-T3** — DeviceGray→ScannedText and `/BitsPerComponent != 8` skip-with-reason
+  are correct; the worker's fixture fix (zlib-compressing the packed bytes before
+  `replaceStreamData(..., /FlateDecode, ...)`) is a genuine correction, not a
+  weakening — the test now asserts the stream is byte-preserved and valid. All
+  15 ImageAnalyzer|PDFOptimizer tests green.
+- **P2-T4** — CMYK preserve path logs a reason, counts `cmykPreserved` and
+  `imagesSkipped`, leaves the stream/ColorSpace untouched; ICCBased `/N==4`
+  detected as CMYK. `CmykSkipped` retained. Correct.
+- **P2-T5** — transcode is opt-in, default preserves; `--transcode-cmyk-to-rgb`
+  in `--help` and USAGE; GUI checkbox wired; `JpegCodec::encodeCmykAsRgb` goes
+  through `CmykHandler` with Adobe APP14/Decode inversion. Reviewer ran the
+  manual gates the log omitted: `run_optimize cmyk_image.pdf
+  --transcode-cmyk-to-rgb` → `CMYK Transcoded: 1`, and
+  `render_diff cmyk_image.pdf <transcoded>` → `SSIM 0.9992 PSNR 41.3` (≥0.98).
+  Note: the internal CIE76 delta-E gate compares the transcode against the same
+  transform, so it validates channel-order/stride but **cannot** detect a wrong
+  inversion decision (self-consistent by construction) — the external SSIM gate
+  is what covers that; documented in the header, acceptable.
+- **P2-T6** — reference-rewriting dedup works (`distinct_duplicate_streams.pdf`
+  31.19% smaller, `Streams Deduplicated: 1`, SSIM 1.0); the P1-T3 test rewrite to
+  `>=1`/`==0` is exactly AC-C5's requirement (not a weakening); `ReferenceRewriter`
+  traversal never follows indirect refs so cycles terminate and cost is bounded
+  by object count — verified correct. Only F-0205 (alpha keys) noted.
+
+### Footprint flags assessed
+
+- **P2-T5 `src/codecs/JpegCodec.h`** (not in `touches_files`): assessed as a
+  legitimate, unavoidable companion declaration for `JpegCodec.cpp`'s new
+  `encodeCmykAsRgb` (declared `.h`, defined `.cpp`, called from
+  `PDFOptimizer.cpp`). The edit is correct and no downstream gate depends on it;
+  recorded as a task-graph completeness observation (Task Manager may add the
+  header to `touches_files` in future graphs) — **not escalated**.
+- **P2-T3 shared-checkout note** ("working tree also contains other tasks'
+  changes"): verified benign — the listed files belong to P2-T1/P2-T5; the P2-T3
+  worker touched only its own four files. No action.
+
+### Observations (honest non-findings, no escalation)
+
+- `streamsDeduplicated` counts *references repointed*, not streams collapsed
+  (`PDFOptimizer.cpp:561-563`). For the AC (`>=1`) this is fine; if a duplicate
+  has multiple referrers the number over-reports streams. Naming nit only.
+- P2-T3's DeviceGray rule classifies any single-channel image with >4 sampled
+  colours as ScannedText, so a natural grayscale photo now routes to JP2 rather
+  than Photo/DCT. Consistent with the AC controls; no requirement violated.
+- P2-T7-T04's evidence gap: the archived TSV is a **default-profile** run, so its
+  "screenshot/line-art MaxQuality rows change codec" leg is not actually
+  demonstrated by the TSV (those rows are Balanced/DCTDecode). P2-T7 is blocked
+  on T03 anyway; T04 evidence should be revisited after ESC-012/013.
+- P2-T5's manual T03/T04 were not recorded by the worker; reviewer verified both
+  pass (above), so the AC holds — evidence-recording gap only.
+- `hasAdobeApp14` scans the whole JPEG for `FF EE 'Adob'`; a false positive in
+  entropy-coded data is possible but only affects the opt-in path, which the
+  external SSIM gate backstops. Non-finding.
+
+### Prior escalations
+
+- ESC-007/ESC-008 (`addressed`): `StrippingProfiles` 5/5 green on reviewer
+  re-run; requirements glossary/AC-B2 note intact — hold, no flip.
+- ESC-009/ESC-010 (`addressed`): the Phase-1 deferred `streamsDeduplicated>=1`
+  follow-up is now implemented by P2-T6 (AC-C5) and verified live — hold (the
+  deferral is satisfied), no flip. New dedup concern filed separately as ESC-015.
+- No `open` prior entries required close-out this pass.
+
+## Summary (this pass)
+
+- P2-T1: **ESC-011 (blocking, BUILD)** — lossless branch embeds a PNG container
+  under `/FlateDecode`; silent image corruption when the re-encode wins. Tests
+  miss it because the fixture takes the kept-original path.
+- P2-T7: **ESC-012 (blocking, BUILD)** verifier gates all tools' rows;
+  **ESC-013 (should-fix, BUILD)** benchmark loops the whole corpus dir;
+  **ESC-014 (blocking, TASK_MANAGER)** no Phase-2 task owns the fix.
+- P2-T6: **ESC-015 (should-fix, BUILD)** dedup signature omits `/SMask`/`/Mask`.
+- P2-T2/T3/T4/T5 and the rest of P2-T1/P2-T6: verified clean (live tests +
+  probes); no weakened tests; verify-only concerns N/A (Phase 2 is a code phase).
+- Footprint flags assessed; P2-T5 `JpegCodec.h` not escalated.
+- No severity inflated: the `streamsDeduplicated` naming, DeviceGray broadening,
+  T04 evidence gap, and APP14 scan are honest non-findings.
+
+Status: REVIEW_COMPLETE
+
+## Phase 2 final close-out — P2-T8/T9/T10 landed, ESC-011..015 (2026-10-07)
+
+Incremental scope: everything since the last `Status: REVIEW_COMPLETE` (Phase 2
+review). Under review: the five rework tasks that address my open escalations —
+P2-T8 (`done`, wave23), P2-T9 (`done`, wave24), P2-T10 (`done`, wave24), plus the
+P2-T7 re-run (`done`, wave25). Read: `docs/build/build_log.md` (Waves 14–25,
+terminal `Status: READY_FOR_REVIEW`), `docs/build/failures.json` (`{}`),
+`docs/build/results/_archive/wave{23,24,25}_P2-T*.json`, `docs/tasks/task-graph.json`
+(P2-T7..P2-T10), `docs/requirements/requirements.md` (AC-C1..C5), and the live
+diffs for `src/codecs/PngCodec.cpp`, `src/core/PDFOptimizer.cpp` (dedup signature +
+loop), `benchmark/run_benchmark.sh`, `tests/test_corpus_verifier.cpp`,
+`tests/test_codecs.cpp`, `tests/test_pdf_optimizer.cpp`,
+`tests/test_structure_writer.cpp`, `tests/test_corpus_generator.{h,cpp}`, `USAGE.md`.
+Reviewer re-ran `ctest` (62/62) and inspected the newest benchmark TSV.
+
+Graphify note: `graphify-out/graph.json` exists but was not needed — the diffs,
+results JSON, and direct source reads fully answered every question (the one
+cross-file interaction, DecisionEngine↔PngCodec↔PDFOptimizer, was read directly).
+`GRAPH_REPORT.md` was not read. Stated explicitly, not silently skipped.
+
+### Z-001 — ESC-011 (PngCodec under FlateDecode) verified fixed, closed
+- Re-verified, not on trust: `src/codecs/PngCodec.cpp::encode` now emits a plain
+  zlib stream via `compress2()` (`<zlib.h>`, no `png.h`/`png_*` anywhere in `src/`,
+  no libpng in `CMakeLists.txt`). Reviewer ran `ctest -R 'CodecTest.
+  PngEncodeIsFlateDecodable|PDFOptimizerTest.AlphaLosslessReencodeIsEmbeddableFlate|
+  DecisionEngine.PngSelectedForAlpha|DecisionEngine.MaxQualityLosslessUsesPng'`
+  → 4/4 green. `CodecTest.PngEncodeIsFlateDecodable` `uncompress()`es the codec
+  output and asserts round-trip + no `0x89 'PNG'` signature; `PDFOptimizerTest.
+  AlphaLosslessReencodeIsEmbeddableFlate` forces `imagesOptimized==1` on an
+  `/SMask` RGB image (source stream stored at zlib level 0) and asserts the
+  embedded `/FlateDecode` stream inflates to the original pixels and loads clean.
+  `m_pngCodec` stays reachable. → ESC-011 `addressed`.
+
+### Z-002 — ESC-012 + ESC-013 (verifier gate + benchmark canonical-14) verified fixed, closed
+- Re-verified, not on trust: `tests/test_corpus_verifier.cpp:501-545` resolves the
+  `Tool` column and applies `EXPECT_GE(ssim, kMinSsim)` only when
+  `toolCell == "pdfcompress"` (header/PSNR/N-A handling preserved); reviewer ran
+  `CorpusGenerator.BenchmarkTsvSsimThresholds` → Passed. `benchmark/run_benchmark.sh`
+  now loops an explicit `CANONICAL_FILES` array of the 14 basenames instead of
+  `"$CORPUS_DIR"/*.pdf`. Reviewer inspected the newest TSV
+  (`build/benchmark_results_20261007_180543.tsv`): exactly 14 canonical files ×
+  5 tools, every pdfcompress row SSIM 1.0000 (encrypted N/A), no non-canonical
+  fixture and no test byproduct present, and no row of any tool below 0.98.
+  → ESC-012 and ESC-013 `addressed`.
+
+### Z-003 — ESC-014 (task split) verified fixed, closed
+- Re-verified, not on trust: `task-graph.json` now holds `P2-T8`
+  (`touches_files: [tests/test_corpus_verifier.cpp, benchmark/run_benchmark.sh]`),
+  `P2-T9` (`[src/core/DecisionEngine.cpp, src/codecs/PngCodec.cpp,
+  src/codecs/CodecInterface.h, tests/test_codecs.cpp, tests/test_pdf_optimizer.cpp]`)
+  and `P2-T10` (`[src/core/PDFOptimizer.cpp, tests/test_structure_writer.cpp,
+  tests/test_corpus_generator.h, tests/test_corpus_generator.cpp]`); all `done`,
+  all `dependencies: []`. These own exactly the ESC-011/012/013/015 fix files and
+  none widen P2-T7. P2-T7's `dependencies` now include P2-T8/T9/T10 and it re-ran
+  `done` (wave25, 4/4). The Phase-2 ctest gate can now pass and does.
+  → ESC-014 `addressed`.
+
+### Z-004 — ESC-015 (dedup signature /SMask /Mask) verified fixed, closed
+- Re-verified, not on trust: `src/core/PDFOptimizer.cpp:534-545` appends `/Filter`,
+  `/DecodeParms`, `/SMask`, `/Mask`, `/Type`, `/Intent` to the dedup signature when
+  present. New fixture `generateMaskedDuplicateStreams()`
+  (`tests/test_corpus_generator.cpp`) builds two byte-identical
+  `/BitsPerComponent 1` image streams where only one carries an `/SMask`; new test
+  `StructureWriter.MaskedStreamsNotDeduplicated` asserts `streamsDeduplicated==0`,
+  three distinct image streams remain, and the single byte-identical pair differs
+  on `/SMask` (proving the key — not re-encoding — kept them apart). Reviewer ran
+  it → Passed. → ESC-015 `addressed`.
+
+### Z-005 — Full suite + no weakened tests / no out-of-scope product change
+- Reviewer ran `ctest --test-dir build --output-on-failure`:
+  **100% tests passed, 0 failed out of 62** (no skips). This includes
+  `PngEncodeIsFlateDecodable`, `AlphaLosslessReencodeIsEmbeddableFlate`,
+  `MaskedStreamsNotDeduplicated`, `DedupCountedWithDefaultsZeroWithout`,
+  `BenchmarkTsvSsimThresholds`, and both `DecisionEngine` PNG cases.
+- No weakened tests: the ESC-015 fixture is genuinely adversarial (only the
+  `/SMask` key differs; without the fix it would merge — the test's
+  `identicalPairs==1` + `EXPECT_NE(hasMask)` pair check proves the key is doing
+  the work), the P1-T3 dedup test was *strengthened* to `>=1`/`==0` plus stream
+  counting, and the verifier change only scopes the existing gate, it does not
+  lower `kMinSsim` or drop assertions. The P2-T8/T9/T10 `files_changed` sets match
+  their `touches_files` (no footprint flags in any results JSON).
+- No out-of-scope product change: the only source change in the incremental scope
+  is `src/codecs/PngCodec.cpp` (P2-T9) and `src/core/PDFOptimizer.cpp` (P2-T10,
+  dedup signature only); all other modified `src/` files belong to the already
+  reviewed P2-T1..P2-T6.
+
+### Z-006 — New finding: stale libpng claims after the PngCodec→zlib switch (ESC-016)
+- id: Z-006; linked task: P2-T9; category: `consistency`; root-cause
+  classification: `code_bug` (documentation/manifest accuracy, no behaviour
+  impact); severity: `nice-to-have`.
+- Evidence: PngCodec no longer uses libpng, yet `src/codecs/PngCodec.h:7`
+  documents "PNG encoder using libpng (lossless, supports alpha)", `name()` at
+  `:10` returns `"libpng"`, `USAGE.md:16/:60/:305` still say "PNG (via libpng)"
+  and list libpng among linked libraries, and `vcpkg.json` still declares the
+  unused `libpng` dependency. Reviewer confirmed via repo-wide grep that no
+  `png.h`/`png_*` symbol remains and `CMakeLists.txt` has no libpng reference.
+- Suggested direction: make the descriptive text match the zlib implementation
+  (keeping the `PngCodec` class name per AC-C2), and drop libpng from
+  `vcpkg.json` if nothing links it. Honest `nice-to-have` — no test, behaviour,
+  security or architecture impact.
+- Routed: ESC-016 → BUILD.
+
+## Summary (this pass)
+- ESC-011/012/013/014/015: independently re-verified fixed and flipped to
+  `addressed` in place (live tests + source diffs + TSV inspection, never on the
+  owning agent's say-so).
+- New ESC-016 (`BUILD`, `nice-to-have`): stale libpng naming/comment/manifest
+  after the PngCodec→zlib switch. Non-blocking.
+- `ctest` 62/62 green; no weakened tests; no out-of-scope product change.
+- No severity inflated. No PLAN/REQUIREMENTS escalation open (ESC-008/ESC-010
+  remain `addressed`). One non-blocking BUILD escalation (ESC-016) remains open.
+
+Status: REVIEW_COMPLETE
+
+## Phase 2 close-out — P2-T11 (ESC-016) + residual CodecInterface.h example (2026-10-07)
+
+Incremental scope: everything since the last `Status: REVIEW_COMPLETE` (Phase 2
+final close-out, line 1188). The only build result newer than `review_log.md`
+(18:12) is `docs/build/results/_archive/wave27_P2-T11.json` (18:31); no other
+result post-dates the boundary, so P2-T11 is the sole task under review. Read:
+`docs/build/build_log.md` (Wave 27, terminal `Status: READY_FOR_REVIEW`),
+`docs/build/failures.json` (`{}`), `docs/build/results/_archive/wave27_P2-T11.json`,
+`docs/build/logs/P2-T11.md`, `docs/build/wave/P2-T11.md` (task + context pack),
+`docs/tasks/task-graph.json` (P2-T11), and the live diffs for
+`src/codecs/PngCodec.h` and `USAGE.md`.
+
+Graphify note: `graphify-out/graph.json` exists but was not needed — the P2-T11
+change is a two-file, two-line labelling edit and direct reads of the diff,
+`PngCodec.h`, `USAGE.md`, `vcpkg.json`, `CMakeLists.txt` and the four `*.name()`
+definitions fully answered every question. `GRAPH_REPORT.md` was not read. Stated
+explicitly, not silently skipped.
+
+### Z-007 — P2-T11 verified: PngCodec.h + USAGE.md libpng labelling dropped; 62/62 green
+- Re-verified, not on trust. `src/codecs/PngCodec.h` grep for `libpng` returns
+  nothing: `:7` reads `/// Lossless zlib/Flate encoder (supports alpha).` and
+  `name()` at `:10` returns `"flate"`; the class name `PngCodec` is retained per
+  AC-C2 and `m_pngCodec` stays reachable (`DecisionEngine.cpp:13` construct,
+  `:49`/`:72` select). `USAGE.md` grep for `libpng` returns nothing: `:16`
+  `**PNG** (via zlib/Flate)`, `:60` linked-library list now `(qpdf,
+  libjpeg-turbo, openjpeg, libdeflate, zlib)`, `:305`
+  `PngCodec.h/.cpp  zlib/Flate encoder (lossless, alpha support)`.
+- Reviewer independently re-ran `cmake -B build
+  -DCMAKE_TOOLCHAIN_FILE=third_party/vcpkg/scripts/buildsystems/vcpkg.cmake`
+  (clean), `cmake --build build` (clean, all targets built) and
+  `ctest --test-dir build --output-on-failure` → **100% tests passed, 0 failed
+  out of 62** (no skips). Repo-wide grep confirms no `png.h`/`png_*` symbol in
+  `src/`, `tests/` or `tools/`, and no test asserts `.name()`, so the `"libpng"`
+  → `"flate"` change breaks nothing.
+- Footprint: `files_changed` in the results JSON is exactly
+  `[src/codecs/PngCodec.h, USAGE.md]` = `touches_files`; `footprint_flags: []`.
+  No test file, no product-behaviour file, no coordination file touched. Not a
+  weakened test, not an out-of-scope product change.
+
+### Z-008 — ESC-016 verified fixed, closed (labelling) + libpng retention accepted as justified
+- ESC-016's actionable scope (make the descriptive text match the zlib
+  implementation) is fully done and independently verified in Z-007.
+- The `vcpkg.json`/`CMakeLists.txt` retention flagged in ESC-016's original
+  "expected" is now an ACCEPTED, documented decision, **not a defect**:
+  `vcpkg.json:6` still declares `libpng` and `CMakeLists.txt:16
+  find_package(PNG REQUIRED)` / `:76 PNG::PNG` still link it. This is correct
+  because `requirements.md:29` lists libpng inside the hard-constraint tech
+  stack ("Treat the existing tech stack above as a hard constraint — do not
+  suggest replacing it") and `architecture.md` names it in 6 rows (:54, :69,
+  :117, :138, :225, :234); dropping a genuinely-unused dependency is therefore
+  not cosmetic — it requires a flagged requirements change plus a Validator
+  architecture refresh, explicitly carved out of ESC-016's cosmetic scope
+  (task_manager_notes.md, P2-T11 narrowing). The code/docs no longer *claim* a
+  libpng dependency, which was the actual defect.
+- → ESC-016 `status: "addressed"` with a `verified:` line recording the
+  retained-dependency rationale. Re-verified on the artifacts themselves, not on
+  the owning agent's say-so.
+
+### Z-009 — New finding: stale `CodecInterface.h` codec-name example (ESC-017)
+- id: Z-009; linked task: P2-T11; category: `consistency`; root-cause
+  classification: `code_bug` (developer-facing documentation accuracy, no
+  behaviour impact); severity: `nice-to-have`.
+- Evidence: `src/codecs/CodecInterface.h:38` documents
+  `Returns the name of the codec (e.g., "TurboJPEG", "libpng", "OpenJPEG").`
+  After P2-T11 no codec returns `"libpng"`: `JpegCodec.h:10` → `"TurboJPEG"`,
+  `Jp2Codec.h:10` → `"OpenJPEG"`, `ZlibCodec.h:9` → `"zlib"`,
+  `PngCodec.h:10` → `"flate"`. The example lists a value no implementation
+  produces — the same class of stale labelling P2-T11 removed from
+  `PngCodec.h`/`USAGE.md`, missed in this developer-facing header (it was
+  outside P2-T11's footprint).
+- Suggested direction: replace the stale `"libpng"` example token with
+  `"flate"` (or drop it). Docs-only; no behaviour/test/architecture impact; do
+  not rename the `PngCodec` class per AC-C2.
+- Routed: ESC-017 → BUILD. Honest `nice-to-have`, non-blocking — it does not
+  reopen ESC-016 and does not gate the Phase-2 close-out.
+- Deliberately NOT escalated (recorded so it is not silently lost): the stale
+  libpng *behaviour* rows in Validator-owned `docs/architecture.md` (:54, :69,
+  :117, :138, :225, :234) and the historical/accurate comment at
+  `src/codecs/PngCodec.cpp:14`. The architecture rows are part of the same
+  deferred stack-change cascade explicitly accepted in Z-008 (requirements
+  change + Validator refresh), and the `PngCodec.cpp:14` comment accurately
+  describes the ESC-011 history it documents — neither is a defect.
+
+### Z-010 — ESC close-out sweep
+- Every prior escalation in `escalations.json` is `addressed` (ESC-007..ESC-016);
+  the only non-`addressed` entry after this pass is the new ESC-017 (BUILD,
+  `nice-to-have`, open). No PLAN/REQUIREMENTS/TASK_MANAGER escalation is open.
+- Tests: reporter re-ran the full suite → 62/62 green. No weakened tests (P2-T11
+  touched no test). No out-of-scope product change (only `PngCodec.h` comment +
+  `name()` label and `USAGE.md` prose changed).
+- No severity inflated: ESC-017 is honestly `nice-to-have`; the architecture-doc
+  staleness is an accepted deferral, not a fresh finding.
+
+## Summary (this pass)
+- P2-T11 independently verified: libpng labelling gone from `PngCodec.h` and
+  `USAGE.md`, class/`m_pngCodec` intact, libpng retained in `vcpkg.json` +
+  `CMakeLists.txt`; configure + build + full `ctest` 62/62 green.
+- ESC-016 flipped to `addressed` in place, with the retained-dependency
+  rationale recorded and verified.
+- One new non-blocking BUILD escalation opened: ESC-017 (`nice-to-have`,
+  `CodecInterface.h:38` stale codec-name example).
+
+Status: REVIEW_COMPLETE
+
+## Phase 2 close-out — P2-T12 lands ESC-017; all escalations addressed (2026-10-07)
+
+Incremental scope: everything since the last `Status: REVIEW_COMPLETE` (Phase 2
+close-out — P2-T11, line 1292). The only build result newer than that boundary is
+`docs/build/results/_archive/wave29_P2-T12.json` (wave29); no other result
+post-dates it, so P2-T12 is the sole task under review. Read:
+`docs/build/build_log.md` (Wave 29, terminal `Status: READY_FOR_REVIEW`),
+`docs/build/failures.json` (`{}`), `docs/build/results/_archive/wave29_P2-T12.json`,
+`docs/build/logs/P2-T12.md`, `docs/build/wave/P2-T12.md` (task + context pack),
+`docs/tasks/task-graph.json` (P2-T12), the live `git diff -- src/codecs/
+CodecInterface.h`, and the four `*.name()` definitions.
+
+Graphify note: `graphify-out/graph.json` exists but was not needed — the P2-T12
+change is a one-line doc-comment edit and a direct read of the diff, the header,
+the four `name()` returns and a full-suite run fully answered every question.
+`GRAPH_REPORT.md` was not read. Stated explicitly, not silently skipped.
+
+### Z-011 — P2-T12 verified: stale `libpng` example gone from CodecInterface.h:38; 62/62 green
+- Re-verified, not on trust. `src/codecs/CodecInterface.h:38` now reads
+  `/// Returns the name of the codec (e.g., "TurboJPEG", "OpenJPEG", "zlib", "flate").`
+  — the stale `"libpng"` token is removed and every example token is a string an
+  actual codec returns. Cross-checked live: `JpegCodec.h:10` `"TurboJPEG"`,
+  `Jp2Codec.h:10` `"OpenJPEG"`, `ZlibCodec.h:9` `"zlib"`, `PngCodec.h:10` `"flate"`.
+  Reviewer ran `grep -rn 'libpng' src/ tests/ tools/` → only
+  `src/codecs/PngCodec.cpp:14` remains (a historical comment accurately describing
+  the ESC-011 libpng→zlib swap, accepted in Z-009 as non-defect); no live claim remains.
+- No behaviour/interface change: `git diff -- src/codecs/CodecInterface.h` shows the
+  P2-T12-authored hunk is the `name()` doc-comment line only; the `virtual std::string
+  name() const = 0;` declaration is unchanged. The co-located `CompressionParams`
+  lossless-hint hunk in the same diff is pre-existing from P2-T9/P2-T1 (the worker
+  flagged it in the log; not authored here), so it is not a P2-T12 footprint issue.
+- Independent re-run: `ctest --test-dir build --output-on-failure` →
+  **100% tests passed, 0 failed out of 62** (no skips), including
+  `CodecTest.PngEncodeIsFlateDecodable`. Footprint: `files_changed` is exactly
+  `[src/codecs/CodecInterface.h]` = `touches_files`; `footprint_flags: []`.
+
+### Z-012 — ESC-017 verified resolved and closed; every other escalation remains addressed
+- ESC-017 re-verified on the artifact itself (Z-011) and flipped to `addressed` in
+  place with a `verified:` line. The example now lists only real codec-name strings,
+  exactly as the entry's `expected` requires.
+- Close-out sweep: `docs/code_review/escalations.json` holds 11 entries (ESC-007..017),
+  **all `addressed`, none `open`** (confirmed by re-parsing the JSON). ESC-016 stays
+  `addressed` (its actionable labelling scope was completed by P2-T11; the retained
+  libpng build dependency remains the accepted, documented decision recorded in Z-008,
+  not a defect). ESC-007..015 unchanged since their close-outs — nothing in P2-T12
+  (a single doc comment) can regress them; no re-diagnosis.
+
+### Z-013 — No new findings (clean close-out)
+- No new bug / quality / consistency / security / gap finding this pass. P2-T12 is a
+  documentation-only edit that is accurate, in-footprint and non-regressing.
+- No severity inflated: the only `libpng` residue in `src/` is the accepted historical
+  comment at `PngCodec.cpp:14`, which is not a finding.
+- Honest non-finding: the `P2-T12` task's `architecture_excerpt` still describes the
+  codec layer as "PNG via libpng" (quoting Validator-owned `docs/architecture.md`);
+  this is the same deferred architecture-doc staleness already accepted in Z-008/Z-009
+  (a requirements-change + Validator-refresh cascade, not a Build defect) and is out of
+  Code Reviewer's fix ownership — recorded, not escalated.
+
+## Summary (this pass)
+- P2-T12 independently verified: `CodecInterface.h:38` no longer cites `libpng`, the
+  example lists only real codec-name strings (`TurboJPEG`/`OpenJPEG`/`zlib`/`flate`),
+  no interface/behaviour change, full `ctest` 62/62 green.
+- ESC-017 flipped to `addressed` in place, verified on the artifact.
+- All 11 escalations (ESC-007..017) confirmed `addressed`; **no open escalations remain**.
+- No new findings; no severity inflated. Phase 2 close-out is clean.
+
+Status: REVIEW_COMPLETE

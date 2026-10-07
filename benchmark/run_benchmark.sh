@@ -89,8 +89,32 @@ run_tool() {
 }
 
 echo "Running benchmarks..."
-for pdf in "$CORPUS_DIR"/*.pdf; do
+# Canonical 14-file corpus (mirrors kCanonicalFiles() in
+# tests/test_corpus_verifier.cpp). The shared corpus directory also holds
+# non-canonical fixtures (large_uncompressed, bitpacked_bpc1,
+# distinct_duplicate_streams) and test byproducts, so iterate this explicit
+# list instead of a raw *.pdf glob.
+CANONICAL_FILES=(
+    text_only.pdf
+    photo_jpeg.pdf
+    photo_heavy.pdf
+    screenshot_flat.pdf
+    line_art.pdf
+    grayscale_scan.pdf
+    monochrome_bw.pdf
+    with_form.pdf
+    with_bookmarks_and_links.pdf
+    with_javascript.pdf
+    with_metadata.pdf
+    encrypted.pdf
+    cmyk_image.pdf
+    transparency.pdf
+)
+for base in "${CANONICAL_FILES[@]}"; do
+    pdf="$CORPUS_DIR/$base"
     [ -e "$pdf" ] || continue
+    # Defense in depth: keep the byproduct skip patterns in case the list is
+    # ever widened back to a glob.
     if [[ "$pdf" == *"_optimized"* ]] || [[ "$pdf" == *".qpdf"* ]] || [[ "$pdf" == *".opt"* ]] || [[ "$pdf" == *".gs"* ]] || [[ "$pdf" == *".ocrmypdf"* ]]; then
         continue
     fi

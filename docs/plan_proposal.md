@@ -31,8 +31,9 @@
 ### Phase 2 (Goal C) — Codec-Selection Correctness
 
 - **Goal:** Scope slider to lossy classes, wire PNG for alpha/lossless, preserve CMYK correctly with
-  opt-in transcode, and activate stream dedup (replace the inert ESC-001 guard with a direct-copy
-  `replaceObject` path).
+  opt-in transcode, and activate stream dedup via **reference-rewriting** (replace the inert ESC-001
+  guard with a cycle-safe referrer walk that repoints references to the kept duplicate, then lets the
+  duplicate drop — `replaceObject` cannot alias duplicate streams; see Scope).
 - **Requirements covered:** AC-C1 (slider lossy-only + `TEST(DecisionEngine, SliderOnlyAffectsLossyClasses)`),
   AC-C2 (PNG for alpha/MaxQuality lossless, SSIM 1.0, `m_pngCodec` reachable), AC-C3 (CMYK preserved,
   never corrupted), AC-C3b (`--transcode-cmyk-to-rgb` + GUI checkbox, SSIM≥0.98, `transcodedCmyk=1`),
@@ -45,18 +46,30 @@
   Monochrome always lossless); new `CmykHandler` (ICC/DeviceCMYK preserve + Adobe APP14 safety +
   skip-with-reason logging; opt-in transcode with internal ΔE sampling); `run_optimize --transcode-cmyk-to-rgb`;
   GUI checkbox; USAGE.md slider/profile/CMYK docs. **Plus the AC-C5 structural stream-dedup activation:**
-  - **Product fix:** in `src/core/PDFOptimizer.cpp` replace the inert ESC-001 indirect-handle skip at
-    line 373 (`if (it->second.isIndirect()) continue;`) with a **direct-copy `replaceObject`** path — pass a
-    direct copy of the replacement stream to `QPDF::replaceObject(obj.getObjGen(), directCopy)` so QPDF accepts
-    it — so two distinct-but-byte-identical indirect streams actually dedup and `streamsDeduplicated`
-    increments. Preserve the existing `obj.getObjGen() != it->second.getObjGen()` guard (line 366) and the
-    per-pair try/catch (line 372-382) so one bad pair never fails the whole file; `seenStreams` may keep
-    storing indirect handles for signature comparison — only the object handed to `replaceObject` must be a
-    direct copy.
+  - **Product fix (reference-rewriting):** in `src/core/PDFOptimizer.cpp` replace the inert ESC-001
+    indirect-handle skip at line 373 (`if (it->second.isIndirect()) continue;`) and the `replaceObject`
+    call at line 376 with a **reference-rewriting** path — a new `ReferenceRewriter` helper walks every
+    object (`pdf.getAllObjects()` + trailer) and its direct nested dicts/arrays, finds every indirect
+    reference to the duplicate's `objGen`, and repoints it to the kept object via `replaceKey` /
+    `setArrayItem`; the now-unreferenced duplicate then drops under the already-set
+    `setPreserveUnreferencedObjects(false)` (or an explicit `removeObject`). Keep the byte-identical
+    signature detection (FNV hash + the five dict keys), the `obj.getObjGen() != it->second.getObjGen()`
+    guard (line 366), and the per-pair try/catch (lines 372-382) so one bad pair never fails the whole
+    file. **Why not `replaceObject`:** QPDF 12.3.2 `QPDF::replaceObject` rejects any indirect handle except
+    a self-stream (`libqpdf/QPDF_objects.cc:1968`), and streams are always indirect (`QPDF::newStream()` →
+    `makeIndirectObject`), so a "direct copy" replacement cannot be constructed — verified infeasible at
+    build time. `replaceKey`/array-item replacement *do* accept indirect references, which is why
+    reference-rewriting works. The walk must be cycle-safe (visit each `getAllObjects()` entry once; never
+    follow indirect references during traversal — recurse only into direct containers) and must not repoint
+    a reference that would change semantics (require `/Filter` + `/DecodeParms` to match alongside the
+    signature).
   - **New staged fixture:** `distinct_duplicate_streams.pdf` in `$TMPDIR` — two **distinct** indirect stream
     objects with byte-identical raw data and matching signatures (same `/Subtype /Width /Height /ColorSpace
-    /BitsPerComponent`). This is NOT the reference-shared `transparency.pdf` / `generateSharedXObject()`
-    fixture and is NOT added to the 14 canonical corpus files.
+    /BitsPerComponent`, `/Filter`, `/DecodeParms`). **Both streams must actually be referenced** (e.g.
+    `/Resources /XObject << /Im1 A /Im2 B >>` with both drawn on the page) — a duplicate with no referrer
+    cannot be deduped, so an unreferenced second stream would leave `streamsDeduplicated == 0` and is not a
+    valid fixture. This is NOT the reference-shared `transparency.pdf` / `generateSharedXObject()` fixture
+    and is NOT added to the 14 canonical corpus files.
   - **Test rewrite:** the Phase-1 P1-T3 test (`tests/test_structure_writer.cpp`, currently asserting
     `streamsDeduplicated == 0`) is rewritten to assert `>= 1` against the new staged fixture, retaining a
     `== 0` assertion for the `--no-dedup` run (P1-T3-T01/T03 continue to cover the shared-XObject PDF).
@@ -184,6 +197,11 @@
 - Phase numbering follows requirements.md Part II exactly (Ph.4 = Goal E batch UX). The task brief's
   shorthand ("lossless-JPEG in Phase 4") is interpreted as Phase 2/4 existing AC (JPEG quality guard +
   size guard), not a separate scope — no new phase is introduced.
+- The Phase-2 AC-C5 mechanism is **reference-rewriting**, not the requirements note's direct-copy
+  `replaceObject` (infeasible against QPDF 12.3.2 — verified at build time). The user approved this
+  Plan-side redesign with AC-C5's *outcome* unchanged; FI-5 surfaces the requirements-text refresh. The
+  `distinct_duplicate_streams.pdf` fixture's two distinct byte-identical streams are both referenced, so
+  the referrer walk has a referrer to repoint.
 
 ## Flagged Issues
 
@@ -204,13 +222,24 @@
 - **FI-4 — Phase 6 (Goal G) font-dedup wording still references the ESC-001 indirect-handle guard that
   Phase 2 removes.** Requirement/journey: Phase 6 Goals ("same hash-join pattern as stream dedup, with the
   ESC-001 indirect-handle guard") and `design_gaps.md` #15. Why it can't be satisfied as written: Phase 2's
-  AC-C5 replaces the inert ESC-001 `isIndirect()` guard at `PDFOptimizer.cpp:373` with a direct-copy
-  `replaceObject` path, so after Phase 2 the ESC-001 guard no longer exists and Phase 6 would cite a removed
-  mechanism. This is a genuine requirements-staleness gap surfaced while folding in the Phase-2 addition, not
-  a Phase-2 defect (Phase 2 stays requirements-bound; no font work is pulled in). Suggested direction:
-  Requirements Analyst refreshes the Phase 6 Goal wording (when Phase 6 is planned) to cite the Phase-2
-  direct-copy dedup path as the pattern to reuse; until then the architecture proposal labels Phase 6's
-  dedup as reusing the Phase-2 corrected pattern. No reinterpretation applied here — flagged, not silently
-  rewritten.
+  AC-C5 replaces the inert ESC-001 `isIndirect()` guard at `PDFOptimizer.cpp:373` with a reference-rewriting
+  path (`ReferenceRewriter`), so after Phase 2 the ESC-001 guard no longer exists and Phase 6 would cite a
+  removed mechanism. This is a genuine requirements-staleness gap surfaced while folding in the Phase-2
+  addition, not a Phase-2 defect (Phase 2 stays requirements-bound; no font work is pulled in). Suggested
+  direction: Requirements Analyst refreshes the Phase 6 Goal wording (when Phase 6 is planned) to cite the
+  Phase-2 reference-rewriting dedup path as the pattern to reuse; until then the architecture proposal
+  labels Phase 6's dedup as reusing the Phase-2 corrected pattern. No reinterpretation applied here —
+  flagged, not silently rewritten.
+- **FI-5 — `requirements.md` AC-C5 implementation note and `design_gaps.md` #14 still name the infeasible
+  direct-copy `replaceObject` mechanism.** Requirement/journey: Phase 2 AC-C5 "Implementation note"
+  (the paragraph after AC-C5) and `design_gaps.md` #14. Why it can't be satisfied as written: the note
+  prescribes passing "a direct copy of the replacement stream to `QPDF::replaceObject(...)`", but QPDF
+  12.3.2 `replaceObject` rejects indirect handles and no direct stream can exist (verified at build time;
+  see Codebase Summary), so that mechanism is infeasible. AC-C5's *outcome* is unchanged and is satisfied
+  by the Plan's user-approved reference-rewriting redesign; only the mechanism wording is stale. Suggested
+  direction: Requirements Analyst refreshes the AC-C5 implementation note and `design_gaps.md` #14 to name
+  reference-rewriting (referrer walk + `replaceKey`/`setArrayItem` repoint + drop-unreferenced) so the
+  normative text matches the approved architecture. No outcome or scope change — surfaced here, not
+  silently rewritten.
 
 Status: READY_FOR_VALIDATION

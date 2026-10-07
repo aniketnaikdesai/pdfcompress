@@ -23,6 +23,11 @@ struct CompressionParams {
     
     // Optional targeted quality hints (0-100), used if applicable by the codec
     int qualityHint = 75;
+
+    // Lossless-branch hints, driven by the source PDF image object.
+    bool hasAlpha = false;                          ///< Image carries an /SMask or /Mask
+    int bitsPerComponent = 8;                       ///< Source bit depth (e.g. 1 for 1-bit scans)
+    ColorSpace colorSpace = ColorSpace::Unknown;    ///< Source color space
 };
 
 /// Abstract base class for all image encoders.
@@ -30,7 +35,7 @@ class ImageCodec {
 public:
     virtual ~ImageCodec() = default;
 
-    /// Returns the name of the codec (e.g., "TurboJPEG", "libpng", "OpenJPEG").
+    /// Returns the name of the codec (e.g., "TurboJPEG", "OpenJPEG", "zlib", "flate").
     virtual std::string name() const = 0;
 
     /// Encodes raw pixel data into a compressed byte stream.

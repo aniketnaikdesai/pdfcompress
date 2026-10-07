@@ -46,3 +46,47 @@ TEST(ImageAnalyzerTest, NullPixelsReturnsUnknown) {
     auto result = ImageAnalyzer::analyze(nullptr, 0, 0, 3, meta);
     EXPECT_EQ(result.classification, ImageClassification::Unknown);
 }
+
+// P2-T3-T01 / AC-C1: a /DeviceGray image with more than four distinct gray
+// levels is a grayscale scan/document, not pure monochrome. It must classify
+// as ScannedText so it takes the slider-independent lossless document path.
+TEST(ImageAnalyzerTest, GrayscaleDeviceImageClassifiedAsScannedText) {
+    const int width = 300, height = 400;
+    std::vector<uint8_t> pixels(static_cast<size_t>(width) * height);
+    for (size_t i = 0; i < pixels.size(); ++i) {
+        pixels[i] = static_cast<uint8_t>(i % 256);
+    }
+
+    ImageMetadata meta;
+    meta.widthPx = width;
+    meta.heightPx = height;
+    meta.colorSpace = ColorSpace::DeviceGray;
+
+    auto result = ImageAnalyzer::analyze(pixels.data(), width, height, 1, meta);
+
+    EXPECT_GT(result.uniqueColorsSampled, 4);
+    EXPECT_TRUE(result.isEffectivelyGrayscale);
+    EXPECT_EQ(result.classification, ImageClassification::ScannedText)
+        << "DeviceGray with many gray levels must be a grayscale scan";
+    EXPECT_NE(result.classification, ImageClassification::Monochrome);
+}
+
+// P2-T3-T02 / AC-C1: a two-level /DeviceGray image (few unique colors) stays
+// Monochrome so it routes to the lossless FlateDecode path, slider ignored.
+TEST(ImageAnalyzerTest, MonochromeDeviceGrayStaysMonochrome) {
+    const int width = 100, height = 100;
+    std::vector<uint8_t> pixels(static_cast<size_t>(width) * height, 0);
+    for (size_t i = 0; i < pixels.size(); ++i) {
+        pixels[i] = (i % 2 == 0) ? 0 : 255;
+    }
+
+    ImageMetadata meta;
+    meta.widthPx = width;
+    meta.heightPx = height;
+    meta.colorSpace = ColorSpace::DeviceGray;
+
+    auto result = ImageAnalyzer::analyze(pixels.data(), width, height, 1, meta);
+
+    EXPECT_LE(result.uniqueColorsSampled, 4);
+    EXPECT_EQ(result.classification, ImageClassification::Monochrome);
+}

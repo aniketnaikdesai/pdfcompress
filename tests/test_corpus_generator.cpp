@@ -329,6 +329,151 @@ std::string TestCorpusGenerator::generateTransparency() {
     return path;
 }
 
+std::string TestCorpusGenerator::generateDistinctDuplicateStreams() {
+    // AC-C5 staged fixture: two DISTINCT indirect image streams carrying
+    // byte-identical raw data with matching dict signatures (including /Filter
+    // and /DecodeParms), both actually referenced and drawn. Separate from the
+    // reference-shared transparency.pdf and never added to the canonical 14.
+    std::string path = (m_dir / "distinct_duplicate_streams.pdf").string();
+    QPDF pdf;
+    pdf.emptyPDF();
+
+    const int w = 64, h = 64;
+    std::vector<uint8_t> pixels(static_cast<size_t>(w) * h * 3);
+    for (size_t i = 0; i < pixels.size(); ++i) pixels[i] = static_cast<uint8_t>((i * 7) % 256);
+
+    // Compress once and reuse the exact same raw bytes for both streams.
+    uLongf compSize = compressBound(pixels.size());
+    std::vector<uint8_t> comp(compSize);
+    compress(comp.data(), &compSize, pixels.data(), pixels.size());
+    std::string imgData(reinterpret_cast<char*>(comp.data()), compSize);
+
+    auto makeImage = [&]() {
+        QPDFObjectHandle stream = QPDFObjectHandle::newStream(&pdf);
+        QPDFObjectHandle d = stream.getDict();
+        d.replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+        d.replaceKey("/Subtype", QPDFObjectHandle::newName("/Image"));
+        d.replaceKey("/Width", QPDFObjectHandle::newInteger(w));
+        d.replaceKey("/Height", QPDFObjectHandle::newInteger(h));
+        d.replaceKey("/ColorSpace", QPDFObjectHandle::newName("/DeviceRGB"));
+        d.replaceKey("/BitsPerComponent", QPDFObjectHandle::newInteger(8));
+        d.replaceKey("/Filter", QPDFObjectHandle::newName("/FlateDecode"));
+        stream.replaceStreamData(
+            imgData,
+            QPDFObjectHandle::newName("/FlateDecode"),
+            QPDFObjectHandle::newNull());
+        return pdf.makeIndirectObject(stream);
+    };
+
+    QPDFObjectHandle imgA = makeImage();
+    QPDFObjectHandle imgB = makeImage();
+
+    QPDFObjectHandle font = QPDFObjectHandle::parse("<< /Type /Font /Subtype /Type1 /Name /F1 /BaseFont /Helvetica >>");
+    QPDFObjectHandle page = QPDFObjectHandle::parse("<< /Type /Page /MediaBox [0 0 612 792] >>");
+    page.replaceKey("/Resources", QPDFObjectHandle::parse("<< /XObject << >> /Font << >> >>"));
+    page.getKey("/Resources").getKey("/XObject").replaceKey("/Im1", imgA);
+    page.getKey("/Resources").getKey("/XObject").replaceKey("/Im2", imgB);
+    page.getKey("/Resources").getKey("/Font").replaceKey("/F1", font);
+    QPDFObjectHandle contents = QPDFObjectHandle::newStream(
+        &pdf,
+        "q 100 0 0 100 72 600 cm /Im1 Do Q\nq 100 0 0 100 200 600 cm /Im2 Do Q\n");
+    page.replaceKey("/Contents", contents);
+    QPDFPageDocumentHelper(pdf).addPage(page, true);
+
+    QPDFWriter writer(pdf, path.c_str());
+    writer.setDeterministicID(true);
+    writer.setStaticID(true);
+    writer.write();
+    return path;
+}
+
+std::string TestCorpusGenerator::generateMaskedDuplicateStreams() {
+    // ESC-015 / AC-C2 regression fixture: two DISTINCT indirect image streams
+    // carrying byte-identical raw data and matching on every legacy signature
+    // key (/Subtype /Width /Height /ColorSpace /BitsPerComponent /Filter
+    // /DecodeParms), where one additionally carries an /SMask. The mask changes
+    // how the pixels are composited, so the pair must NOT be deduplicated -
+    // merging would repoint referrers and silently drop transparency.
+    //
+    // /BitsPerComponent 1 is deliberate: PDFOptimizer leaves bit-packed images
+    // untouched (it cannot re-encode them), so both streams keep their identical
+    // raw bytes through the image pass and the only thing that can prevent the
+    // dedup merge is the added /SMask signature key.
+    std::string path = (m_dir / "masked_duplicate_streams.pdf").string();
+    QPDF pdf;
+    pdf.emptyPDF();
+
+    const int w = 64, h = 64;
+    // 1-bit packed samples: 64*64/8 = 512 bytes, identical for both images.
+    std::vector<uint8_t> bits(static_cast<size_t>(w) * h / 8);
+    for (size_t i = 0; i < bits.size(); ++i) bits[i] = static_cast<uint8_t>((i * 13 + 7) % 256);
+
+    uLongf compSize = compressBound(bits.size());
+    std::vector<uint8_t> comp(compSize);
+    compress(comp.data(), &compSize, bits.data(), bits.size());
+    std::string imgData(reinterpret_cast<char*>(comp.data()), compSize);
+
+    // Soft mask stream: 8-bit DeviceGray alpha plane of the same dimensions.
+    std::vector<uint8_t> alpha(static_cast<size_t>(w) * h);
+    for (size_t i = 0; i < alpha.size(); ++i) alpha[i] = static_cast<uint8_t>((i * 3) % 256);
+    uLongf aCompSize = compressBound(alpha.size());
+    std::vector<uint8_t> aComp(aCompSize);
+    compress(aComp.data(), &aCompSize, alpha.data(), alpha.size());
+    std::string aStr(reinterpret_cast<char*>(aComp.data()), aCompSize);
+
+    QPDFObjectHandle smask = QPDFObjectHandle::newStream(&pdf);
+    QPDFObjectHandle sdict = smask.getDict();
+    sdict.replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+    sdict.replaceKey("/Subtype", QPDFObjectHandle::newName("/Image"));
+    sdict.replaceKey("/Width", QPDFObjectHandle::newInteger(w));
+    sdict.replaceKey("/Height", QPDFObjectHandle::newInteger(h));
+    sdict.replaceKey("/ColorSpace", QPDFObjectHandle::newName("/DeviceGray"));
+    sdict.replaceKey("/BitsPerComponent", QPDFObjectHandle::newInteger(8));
+    sdict.replaceKey("/Filter", QPDFObjectHandle::newName("/FlateDecode"));
+    smask.replaceStreamData(aStr, QPDFObjectHandle::newName("/FlateDecode"), QPDFObjectHandle::newNull());
+    QPDFObjectHandle smaskRef = pdf.makeIndirectObject(smask);
+
+    auto makeImage = [&]() {
+        QPDFObjectHandle stream = QPDFObjectHandle::newStream(&pdf);
+        QPDFObjectHandle d = stream.getDict();
+        d.replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+        d.replaceKey("/Subtype", QPDFObjectHandle::newName("/Image"));
+        d.replaceKey("/Width", QPDFObjectHandle::newInteger(w));
+        d.replaceKey("/Height", QPDFObjectHandle::newInteger(h));
+        d.replaceKey("/ColorSpace", QPDFObjectHandle::newName("/DeviceGray"));
+        d.replaceKey("/BitsPerComponent", QPDFObjectHandle::newInteger(1));
+        d.replaceKey("/Filter", QPDFObjectHandle::newName("/FlateDecode"));
+        stream.replaceStreamData(
+            imgData,
+            QPDFObjectHandle::newName("/FlateDecode"),
+            QPDFObjectHandle::newNull());
+        return pdf.makeIndirectObject(stream);
+    };
+
+    QPDFObjectHandle imgMasked = makeImage();
+    QPDFObjectHandle imgPlain = makeImage();
+    // Only the masked stream carries /SMask; the raw bytes stay identical.
+    imgMasked.getDict().replaceKey("/SMask", smaskRef);
+
+    QPDFObjectHandle font = QPDFObjectHandle::parse("<< /Type /Font /Subtype /Type1 /Name /F1 /BaseFont /Helvetica >>");
+    QPDFObjectHandle page = QPDFObjectHandle::parse("<< /Type /Page /MediaBox [0 0 612 792] >>");
+    page.replaceKey("/Resources", QPDFObjectHandle::parse("<< /XObject << >> /Font << >> >>"));
+    page.getKey("/Resources").getKey("/XObject").replaceKey("/Im1", imgMasked);
+    page.getKey("/Resources").getKey("/XObject").replaceKey("/Im2", imgPlain);
+    page.getKey("/Resources").getKey("/Font").replaceKey("/F1", font);
+    QPDFObjectHandle contents = QPDFObjectHandle::newStream(
+        &pdf,
+        "q 100 0 0 100 72 600 cm /Im1 Do Q\nq 100 0 0 100 200 600 cm /Im2 Do Q\n");
+    page.replaceKey("/Contents", contents);
+    QPDFPageDocumentHelper(pdf).addPage(page, true);
+
+    QPDFWriter writer(pdf, path.c_str());
+    writer.setDeterministicID(true);
+    writer.setStaticID(true);
+    writer.write();
+    return path;
+}
+
 std::string TestCorpusGenerator::generateEncrypted() {
     std::string path = (m_dir / "encrypted.pdf").string();
     QPDF pdf;

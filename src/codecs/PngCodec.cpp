@@ -1,98 +1,54 @@
 #include "PngCodec.h"
-#include <png.h>
-#include <stdexcept>
+#include <zlib.h>
 #include <iostream>
 
 namespace pdfcompress {
 
-// libpng requires a write callback for custom I/O
-static void custom_png_write_data(png_structp png_ptr, png_bytep data, png_size_t length) {
-    auto* out = reinterpret_cast<std::vector<uint8_t>*>(png_get_io_ptr(png_ptr));
-    if (out) {
-        out->insert(out->end(), data, data + length);
-    }
-}
-
-static void custom_png_flush(png_structp png_ptr) {
-    // No-op for memory buffers
-}
-
-std::vector<uint8_t> PngCodec::encode(const uint8_t* pixels, 
+// Lossless encoder for the alpha and MaxQuality-lossless branches.
+//
+// DecisionEngine labels this branch StreamFilter::FlateDecode, and
+// PDFOptimizer embeds the returned bytes as a PDF image XObject with
+// /Filter /FlateDecode and no /DecodeParms. The output therefore has to be a
+// plain zlib stream of the raw samples, never a full PNG container (which
+// carries a 0x89 'PNG' signature plus IHDR/IDAT/IEND and cannot be inflated
+// under /FlateDecode). ESC-011: the previous libpng container writer produced
+// PNG bytes under a FlateDecode label, so qpdf failed with "incorrect header
+// check".
+//
+// The class keeps its name and its role: it is the lossless, alpha-capable
+// codec reachable by the DecisionEngine's m_pngCodec branches (AC-C2).
+std::vector<uint8_t> PngCodec::encode(const uint8_t* pixels,
                                       const CompressionParams& params) {
     if (!pixels || params.width <= 0 || params.height <= 0) {
         return {};
     }
-
-    std::vector<uint8_t> result;
-
-    png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
-    if (!png_ptr) {
-        std::cerr << "PngCodec: png_create_write_struct failed\n";
-        return {};
-    }
-
-    png_infop info_ptr = png_create_info_struct(png_ptr);
-    if (!info_ptr) {
-        std::cerr << "PngCodec: png_create_info_struct failed\n";
-        png_destroy_write_struct(&png_ptr, nullptr);
-        return {};
-    }
-
-    if (setjmp(png_jmpbuf(png_ptr))) {
-        std::cerr << "PngCodec: libpng error during encoding\n";
-        png_destroy_write_struct(&png_ptr, &info_ptr);
-        return {};
-    }
-
-    // Set custom writer
-    png_set_write_fn(png_ptr, &result, custom_png_write_data, custom_png_flush);
-
-    // Determine color type
-    int color_type = PNG_COLOR_TYPE_RGB;
-    if (params.channels == 1) color_type = PNG_COLOR_TYPE_GRAY;
-    else if (params.channels == 3) color_type = PNG_COLOR_TYPE_RGB;
-    else if (params.channels == 4) color_type = PNG_COLOR_TYPE_RGBA;
-    else {
+    if (params.channels != 1 && params.channels != 3 && params.channels != 4) {
         std::cerr << "PngCodec: Unsupported channel count " << params.channels << "\n";
-        png_destroy_write_struct(&png_ptr, &info_ptr);
         return {};
     }
 
-    png_set_IHDR(png_ptr, info_ptr, 
-                 params.width, params.height, 
-                 8, // bits per channel
-                 color_type, 
-                 PNG_INTERLACE_NONE, 
-                 PNG_COMPRESSION_TYPE_DEFAULT, 
-                 PNG_FILTER_TYPE_DEFAULT);
+    const size_t rawSize = static_cast<size_t>(params.width) *
+                           static_cast<size_t>(params.height) *
+                           static_cast<size_t>(params.channels);
 
-    // Adjust zlib compression level based on profile
-    // PNG is lossless, so "quality" really means CPU effort vs file size
+    // Compression is lossless, so "quality" really means CPU effort vs size.
+    int level = 6; // Balanced
     if (params.profile == CompressionProfile::MaxCompression) {
-        png_set_compression_level(png_ptr, 9); // Max zlib compression (slowest)
-        // Also enable all filters
-        png_set_filter(png_ptr, 0, PNG_ALL_FILTERS);
+        level = 9;
     } else if (params.profile == CompressionProfile::MaxQuality) {
-        png_set_compression_level(png_ptr, 1); // Fast compression
-    } else { // Balanced
-        png_set_compression_level(png_ptr, 6); // Default zlib level
+        level = 1;
     }
 
-    png_write_info(png_ptr, info_ptr);
+    uLongf compressedSize = compressBound(static_cast<uLong>(rawSize));
+    std::vector<uint8_t> result(compressedSize);
 
-    // Set up row pointers
-    std::vector<png_bytep> row_pointers(params.height);
-    const size_t rowStride = params.width * params.channels;
-    for (int y = 0; y < params.height; ++y) {
-        // Warning: const_cast is safe here because libpng doesn't modify the input buffer when writing
-        row_pointers[y] = const_cast<png_bytep>(pixels + y * rowStride);
+    if (compress2(result.data(), &compressedSize, pixels,
+                  static_cast<uLong>(rawSize), level) != Z_OK) {
+        std::cerr << "PngCodec: zlib compression failed\n";
+        return {};
     }
 
-    png_write_image(png_ptr, row_pointers.data());
-    png_write_end(png_ptr, nullptr);
-
-    png_destroy_write_struct(&png_ptr, &info_ptr);
-
+    result.resize(compressedSize);
     return result;
 }
 

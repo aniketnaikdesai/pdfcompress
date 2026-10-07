@@ -1,5 +1,8 @@
 #include "PDFOptimizer.h"
 #include "ImageAnalyzer.h"
+#include "CmykHandler.h"
+#include "ReferenceRewriter.h"
+#include "../codecs/JpegCodec.h"
 
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFWriter.hh>
@@ -223,22 +226,201 @@ OptimizationResult PDFOptimizer::optimize(const std::string& inputPath,
                     }
                 }
 
-                // Determine channels from ColorSpace
+                // Determine color space / channels / bit depth from the image dict.
+                ColorSpace colorSpace = ColorSpace::Unknown;
                 int channels = 3;
                 if (dict.hasKey("/ColorSpace")) {
                     QPDFObjectHandle cs = dict.getKey("/ColorSpace");
-                    if (cs.isName() && cs.getName() == "/DeviceGray") channels = 1;
-                    else if (cs.isName() && cs.getName() == "/DeviceCMYK") channels = 4;
+                    std::string csName;
+                    if (cs.isName()) {
+                        csName = cs.getName();
+                    } else if (cs.isArray() && cs.getArrayNItems() > 0 && cs.getArrayItem(0).isName()) {
+                        csName = cs.getArrayItem(0).getName();
+                    }
+
+                    if (csName == "/DeviceGray") { channels = 1; colorSpace = ColorSpace::DeviceGray; }
+                    else if (csName == "/DeviceRGB") { channels = 3; colorSpace = ColorSpace::DeviceRGB; }
+                    else if (csName == "/DeviceCMYK") { channels = 4; colorSpace = ColorSpace::DeviceCMYK; }
+                    else if (csName == "/Indexed") { colorSpace = ColorSpace::Indexed; }
+                    else if (csName == "/ICCBased") {
+                        colorSpace = ColorSpace::ICCBased;
+                        // ICCBased is [/ICCBased <stream>]; the stream's /N is
+                        // the component count. N==4 is CMYK and must be
+                        // preserved, never treated as RGBA.
+                        if (cs.isArray() && cs.getArrayNItems() >= 2) {
+                            QPDFObjectHandle iccStream = cs.getArrayItem(1);
+                            if (iccStream.isStream() &&
+                                iccStream.getDict().hasKey("/N") &&
+                                iccStream.getDict().getKey("/N").getIntValueAsInt() == 4) {
+                                channels = 4;
+                            }
+                        }
+                    }
                 }
 
-                // Safety skip: The current JpegCodec corrupts CMYK by treating it as RGBA.
-                if (channels == 4) {
+                int bitsPerComponent = 8;
+                if (dict.hasKey("/BitsPerComponent")) {
+                    bitsPerComponent = dict.getKey("/BitsPerComponent").getIntValueAsInt();
+                }
+
+                // Safety skip: bit-packed images (/BitsPerComponent != 8) store
+                // their samples packed rather than one byte per sample. The
+                // raw-pixel decode path below cannot interpret that layout
+                // without re-packing, so keep the original stream untouched
+                // instead of mis-decoding it, and record the reason.
+                if (bitsPerComponent != 8) {
+                    std::cerr << "PDFOptimizer: keeping image obj "
+                              << imageObj.getObjGen().getObj()
+                              << " original: /BitsPerComponent " << bitsPerComponent
+                              << " is not 8 (bit-packed data not re-encoded)"
+                              << std::endl;
                     result.imagesSkipped++;
+                    continue;
+                }
+
+                // Detect alpha. An image carrying an /SMask or /Mask keeps its
+                // transparency in a separate stream; it must never be flattened
+                // into JPEG. The DecisionEngine routes such images to the
+                // lossless PNG/FlateDecode branch, and the mask stream below is
+                // left untouched.
+                bool hasAlpha = dict.hasKey("/SMask") || dict.hasKey("/Mask");
+
+                // CMYK handling. Default: DeviceCMYK / ICCBased-CMYK images
+                // are kept byte-for-byte (the JpegCodec cannot re-encode CMYK
+                // without treating the 4 channels as RGBA and corrupting the
+                // colors), with the skip recorded and a human-readable reason.
+                // Opt-in (AC-C3b): transcode to RGB and re-encode as JPEG,
+                // honoring Adobe APP14 / /Decode inversion so the colors are
+                // never silently flipped.
+                if (channels == 4) {
+                    if (!options.transcodeCmykToRgb) {
+                        std::cerr << "PDFOptimizer: preserving image obj "
+                                  << imageObj.getObjGen().getObj()
+                                  << " original: CMYK image kept intact "
+                                     "(/ColorSpace preserved, not re-encoded)"
+                                  << std::endl;
+                        result.cmykPreserved++;
+                        result.imagesSkipped++;
+                        continue;
+                    }
+
+                    // Gather tightly-packed 4-channel CMYK samples.
+                    std::vector<uint8_t> cmykPixels;
+                    size_t originalImageBytes = 0;
+                    bool inverted = false;
+
+                    if (filter == "/DCTDecode") {
+                        auto rawStreamData = imageObj.getRawStreamData();
+                        if (rawStreamData) {
+                            originalImageBytes = rawStreamData->getSize();
+                            // Adobe-produced CMYK JPEGs store inverted samples.
+                            inverted = CmykHandler::hasAdobeApp14(
+                                rawStreamData->getBuffer(), rawStreamData->getSize());
+                            tjhandle tj = tjInitDecompress();
+                            if (tj) {
+                                int w = 0, h = 0, subsamp = 0, cs = 0;
+                                if (tjDecompressHeader3(tj, rawStreamData->getBuffer(),
+                                                        rawStreamData->getSize(),
+                                                        &w, &h, &subsamp, &cs) == 0) {
+                                    cmykPixels.resize(static_cast<size_t>(w) * h * 4);
+                                    if (tjDecompress2(tj, rawStreamData->getBuffer(),
+                                                      rawStreamData->getSize(),
+                                                      cmykPixels.data(), w, 0, h,
+                                                      TJPF_CMYK, 0) != 0) {
+                                        cmykPixels.clear();
+                                    }
+                                }
+                                tjDestroy(tj);
+                            }
+                        }
+                    } else if (filter == "/FlateDecode") {
+                        // A /Decode array of [1 0 1 0 1 0 1 0] marks inverted
+                        // CMYK samples in the raw stream.
+                        if (dict.hasKey("/Decode")) {
+                            QPDFObjectHandle dec = dict.getKey("/Decode");
+                            if (dec.isArray() && dec.getArrayNItems() >= 8 &&
+                                dec.getArrayItem(0).isNumber() &&
+                                dec.getArrayItem(0).getIntValueAsInt() == 1) {
+                                inverted = true;
+                            }
+                        }
+                        auto rawStreamData = imageObj.getRawStreamData();
+                        if (rawStreamData) originalImageBytes = rawStreamData->getSize();
+                        auto streamData = imageObj.getStreamData(qpdf_dl_all);
+                        if (streamData) {
+                            cmykPixels.assign(streamData->getBuffer(),
+                                              streamData->getBuffer() + streamData->getSize());
+                        }
+                    }
+
+                    const size_t needed = static_cast<size_t>(width) * height * 4;
+                    if (cmykPixels.size() < needed) {
+                        std::cerr << "PDFOptimizer: preserving image obj "
+                                  << imageObj.getObjGen().getObj()
+                                  << " original: CMYK transcode could not decode "
+                                     "the source stream"
+                                  << std::endl;
+                        result.cmykPreserved++;
+                        result.imagesSkipped++;
+                        continue;
+                    }
+
+                    CompressionParams rgbParams;
+                    rgbParams.width = width;
+                    rgbParams.height = height;
+                    rgbParams.channels = 3;
+                    rgbParams.profile = options.profile;
+                    rgbParams.qualityHint = options.qualityHint;
+                    rgbParams.colorSpace = ColorSpace::DeviceRGB;
+
+                    JpegCodec jpegCodec;
+                    float maxDeltaE = 0.0f;
+                    auto compressedBytes = jpegCodec.encodeCmykAsRgb(
+                        cmykPixels.data(), width, height, rgbParams, inverted, &maxDeltaE);
+
+                    if (compressedBytes.empty()) {
+                        std::cerr << "PDFOptimizer: preserving image obj "
+                                  << imageObj.getObjGen().getObj()
+                                  << " original: CMYK transcode rejected (max delta-E "
+                                  << maxDeltaE << ")"
+                                  << std::endl;
+                        result.cmykPreserved++;
+                        result.imagesSkipped++;
+                        continue;
+                    }
+
+                    auto buffer = std::make_shared<Buffer>(compressedBytes.size());
+                    memcpy(buffer->getBuffer(), compressedBytes.data(), compressedBytes.size());
+                    imageObj.replaceStreamData(
+                        buffer,
+                        QPDFObjectHandle::newName("/DCTDecode"),
+                        QPDFObjectHandle::newNull()
+                    );
+
+                    // The image is now 3-channel RGB; drop CMYK-only keys.
+                    dict.replaceKey("/Filter", QPDFObjectHandle::newName("/DCTDecode"));
+                    dict.replaceKey("/ColorSpace", QPDFObjectHandle::newName("/DeviceRGB"));
+                    if (dict.hasKey("/Decode")) dict.removeKey("/Decode");
+                    if (dict.hasKey("/DecodeParms")) dict.removeKey("/DecodeParms");
+
+                    if (originalImageBytes > compressedBytes.size()) {
+                        result.imageBytesSaved += originalImageBytes - compressedBytes.size();
+                    }
+                    result.transcodedCmyk++;
+                    result.imagesOptimized++;
+
+                    std::cerr << "PDFOptimizer: transcoded image obj "
+                              << imageObj.getObjGen().getObj()
+                              << " CMYK -> DeviceRGB (max delta-E " << maxDeltaE << ")"
+                              << std::endl;
                     continue;
                 }
 
                 std::vector<uint8_t> rawPixels;
                 ImageMetadata meta;
+                meta.hasAlpha = hasAlpha;
+                meta.colorSpace = colorSpace;
+                meta.bitsPerComponent = bitsPerComponent;
 
                 // Decompress the stream to raw pixels for analysis
                 if (filter == "/DCTDecode") {
@@ -281,7 +463,7 @@ OptimizationResult PDFOptimizer::optimize(const std::string& inputPath,
 
                     // Re-compress
                     StreamFilter outFilter;
-                    auto compressedBytes = m_decisionEngine.compress(rawPixels.data(), width, height, channels, analysis, outFilter, options.qualityHint);
+                    auto compressedBytes = m_decisionEngine.compress(rawPixels.data(), width, height, channels, analysis, outFilter, options.qualityHint, hasAlpha, bitsPerComponent, colorSpace);
 
                     if (!compressedBytes.empty() && compressedBytes.size() < meta.compressedSize) {
                         size_t saved = meta.compressedSize - compressedBytes.size();
@@ -347,6 +529,20 @@ OptimizationResult PDFOptimizer::optimize(const std::string& inputPath,
                 if (dict.hasKey("/Height")) sig += dict.getKey("/Height").unparse() + ";";
                 if (dict.hasKey("/ColorSpace")) sig += dict.getKey("/ColorSpace").unparse() + ";";
                 if (dict.hasKey("/BitsPerComponent")) sig += dict.getKey("/BitsPerComponent").unparse() + ";";
+                // AC-C5: streams only merge when their filter pipeline matches,
+                // so differing /Filter or /DecodeParms never collapse.
+                if (dict.hasKey("/Filter")) sig += dict.getKey("/Filter").unparse() + ";";
+                if (dict.hasKey("/DecodeParms")) sig += dict.getKey("/DecodeParms").unparse() + ";";
+                // ESC-015 / AC-C2: a soft or color-key mask changes how the
+                // bytes are composited, and /Type /Intent distinguish the
+                // stream's role. Two byte-identical images that differ on any
+                // of these must never merge - merging would repoint referrers
+                // and silently change transparency. Any differing key blocks
+                // the merge; a pair matching on all of them still dedups.
+                if (dict.hasKey("/SMask")) sig += dict.getKey("/SMask").unparse() + ";";
+                if (dict.hasKey("/Mask")) sig += dict.getKey("/Mask").unparse() + ";";
+                if (dict.hasKey("/Type")) sig += dict.getKey("/Type").unparse() + ";";
+                if (dict.hasKey("/Intent")) sig += dict.getKey("/Intent").unparse() + ";";
 
                 size_t dataSize = rawData->getSize();
                 const unsigned char* buf = rawData->getBuffer();
@@ -364,17 +560,17 @@ OptimizationResult PDFOptimizer::optimize(const std::string& inputPath,
                     if (prevData && prevData->getSize() == dataSize &&
                         memcmp(prevData->getBuffer(), buf, dataSize) == 0 &&
                         obj.getObjGen() != it->second.getObjGen()) {
-                        // ESC-001: QPDF::replaceObject requires a direct object as
-                        // replacement, but seenStreams stores indirect handles.
-                        // Passing an indirect handle throws and fails the whole file.
-                        // Skip such pairs (safe: just misses one dedup opportunity)
-                        // and guard with try/catch so one bad pair never fails the file.
+                        // AC-C5: PDF streams are always indirect and
+                        // QPDF::replaceObject rejects indirect handles, so the
+                        // duplicate cannot be aliased by replacing it. Instead
+                        // repoint every reference from the duplicate to the kept
+                        // byte-identical stream; the duplicate then drops under
+                        // setPreserveUnreferencedObjects(false). Keep the
+                        // per-pair try/catch so one bad pair never fails a file.
                         try {
-                            if (it->second.isIndirect()) {
-                                continue;
-                            }
-                            pdf.replaceObject(obj.getObjGen(), it->second);
-                            result.streamsDeduplicated++;
+                            std::size_t repointed =
+                                ReferenceRewriter::repointAll(pdf, obj.getObjGen(), it->second);
+                            result.streamsDeduplicated += static_cast<int>(repointed);
                         } catch (const std::exception& e) {
                             std::cerr << "Dedup skip obj " << obj.getObjGen().getObj()
                                       << ": " << e.what() << std::endl;

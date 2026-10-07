@@ -13,11 +13,14 @@ quality settings for each one. Supported codecs:
 
 - **JPEG** (via libjpeg-turbo) — photos, natural images
 - **JPEG 2000** (via OpenJPEG) — scanned documents, high-compression photos
-- **PNG** (via libpng) — screenshots, line art (lossless)
+- **PNG** (via zlib/Flate) — screenshots, line art, and any image with an
+  alpha channel (lossless; alpha images never take the lossy JPEG path)
 - **zlib/Deflate** (via zlib) — monochrome, lossless fallback for screenshots
 
 You can control the JPEG quality via a slider in the GUI, and override
-per-classification codec choices using the compression profile.
+per-classification codec choices using the compression profile. The slider
+only affects the **lossy** classes (photo, screenshot, line art); lossless
+classes (scanned text, monochrome) and alpha-bearing images ignore it.
 
 ---
 
@@ -54,7 +57,7 @@ cmake --build build
 ```
 
 This fetches PDFium binaries automatically, installs vcpkg dependencies
-(qpdf, libpng, libjpeg-turbo, openjpeg, libdeflate, zlib), and produces:
+(qpdf, libjpeg-turbo, openjpeg, libdeflate, zlib), and produces:
 
 | Target | Path | Description |
 |--------|------|-------------|
@@ -86,9 +89,12 @@ The GUI is a single window with the following controls from top to bottom:
 - **Version info bar** — shows QPDF, Qt, and PDFium version
 - **Inspect PDF** button — read-only scan of PDF image contents
 - **Optimize PDF** button — run the full compression pipeline
-- **JPEG Quality slider** — sets the JPEG quality (1–100, default 70).
-  Lower = smaller file, lower quality. Higher = larger file, higher quality.
-  The value is read at the moment you click "Optimize PDF".
+- **JPEG Quality slider** — sets the JPEG quality (1–100, default 70) for the
+  **lossy** classes only (photo, screenshot, line art). Lower = smaller file,
+  lower quality. Higher = larger file, higher quality. It has no effect on
+  scanned-text (JPEG 2000), monochrome (zlib/Deflate), or alpha-bearing images
+  (PNG), which use a fixed codec and always ignore the slider. The value is
+  read at the moment you click "Optimize PDF".
 - **Results area** — scrollable log of inspection or optimization output
 
 The window also accepts **dragged PDF files** from Finder. When you drag
@@ -213,10 +219,21 @@ the flags documented in the next section.
 | `--linearize` | Enable PDF linearization (Fast Web View); off by default |
 | `--no-flate-recompress` | Do not recompress Flate streams at level 9 (on by default) |
 | `--no-dedup` | Do not de-duplicate byte-identical streams (on by default) |
+| `--transcode-cmyk-to-rgb` | Opt in to converting DeviceCMYK / ICC-based CMYK images to DeviceRGB and re-encoding as JPEG (off by default; may shift spot/press colors) |
 
 Stripping flags override the selected profile's defaults, so for example
 `--profile balanced --strip-bookmarks` strips bookmarks on top of the
 Balanced defaults.
+
+**CMYK handling.** By default CMYK images are **preserved byte-for-byte**
+(their color space is never converted), and the result reports the count via
+`cmykPreserved` with a reason. `--transcode-cmyk-to-rgb` is an explicit opt-in
+that converts them to DeviceRGB; because this can shift spot and press colors,
+it is **off by default**.
+
+**Stream de-duplication** is active for all profiles by default: byte-identical
+streams are content-hashed and references are rewritten so the data is stored
+once. Use `--no-dedup` to disable it.
 
 ---
 
@@ -228,14 +245,20 @@ external ML/AI libraries):
 | Classification | Heuristics | Default Codec |
 |----------------|------------|---------------|
 | Photo          | High entropy, many unique colors | JPEG (or JP2 at Max Compression) |
-| Screenshot     | Few colors, large flat regions, low entropy | JPEG (zlib if MaxQuality + no slider) |
-| Line Art       | High edge density, flat regions, limited palette | JPEG (zlib if MaxQuality + no slider) |
+| Screenshot     | Few colors, large flat regions, low entropy | JPEG (PNG/Flate if MaxQuality + no slider) |
+| Line Art       | High edge density, flat regions, limited palette | JPEG (PNG/Flate if MaxQuality + no slider) |
 | Scanned Text   | Grayscale, strong edges, moderate entropy, high DPI | JPEG 2000 |
 | Monochrome     | ≤4 unique colors, grayscale | zlib/Deflate (lossless) |
 
-When a JPEG quality hint is set (the slider moved off its default),
-Screenshot and Line Art images use JPEG instead of the Max Quality zlib
-fallback; Monochrome stays zlib and Scanned Text stays JPEG 2000.
+The JPEG quality slider is scoped to the **lossy** classes only — photo,
+screenshot, and line art. It changes their JPEG quality and, for screenshot
+and line art under Max Quality, selects JPEG instead of the lossless
+PNG/Flate fallback. **Monochrome** (zlib/Deflate, lossless) and **Scanned
+Text** (JPEG 2000) use a fixed codec and **ignore the slider entirely**, so
+`--quality 70` produces the same codec choice as no `--quality` for them.
+Images carrying an alpha channel (`/SMask` or `/Mask`) always take the
+lossless PNG path regardless of class or slider, so alpha is never flattened
+into a JPEG.
 
 ---
 
@@ -245,7 +268,7 @@ The results pane reports:
 
 - **Size Reduction** — `(1 - optimized/original) * 100`. Measured on the
   14-file benchmark corpus (archived as
-  `build/benchmark_results_20261007_160128.tsv`), pdfcompress results
+  `build/benchmark_results_20261007_173438.tsv`), pdfcompress results
   ranged from -4.65% (`text_only.pdf`, a slight increase) to 47.55%
   (`line_art.pdf`), with a median of about 11%; image-heavy files benefit
   most. Encrypted PDFs are rejected before optimization, so their savings
@@ -279,7 +302,7 @@ src/
   codecs/
     CodecInterface.h      Abstract ImageCodec base class + CompressionParams
     JpegCodec.h/.cpp      libjpeg-turbo encoder
-    PngCodec.h/.cpp       libpng encoder (lossless, alpha support)
+    PngCodec.h/.cpp       zlib/Flate encoder (lossless, alpha support)
     Jp2Codec.h/.cpp       OpenJPEG (JPEG 2000) encoder
     ZlibCodec.h/.cpp      zlib/Deflate encoder (lossless, for monochrome/fallback)
   gui/                    (reserved for future GUI refactoring)
@@ -302,8 +325,14 @@ requested).
 ## Limitations & Known Issues
 
 - **Encrypted PDFs** are rejected (no password support yet).
-- **CMYK images** may have reduced accuracy during conversion (handled as
-  4-channel, but color space metadata is preserved).
+- **CMYK images are preserved by default.** DeviceCMYK / ICC-based CMYK
+  images are kept byte-for-byte rather than converted, so their colors are
+  not degraded; the result logs the preserved count with a reason. Passing
+  `--transcode-cmyk-to-rgb` opts in to converting them to DeviceRGB, which
+  may shift spot and press colors — it is off by default.
+- **Stream de-duplication is active** (on by default for all profiles):
+  byte-identical streams are content-hashed and their references rewritten so
+  the data is stored once. Disable it with `--no-dedup`.
 - **JPEG XL** is not yet integrated (listed in the spec but not wired).
 - **JBIG2** is not yet integrated (monochrome uses zlib instead).
 - **No before/after preview** yet.

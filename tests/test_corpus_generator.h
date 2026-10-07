@@ -32,6 +32,8 @@ public:
     std::string generateWithBookmarksAndLinks();
     std::string generateCmykImage();
     std::string generateLargeUncompressed();
+    std::string generateDistinctDuplicateStreams();
+    std::string generateMaskedDuplicateStreams();
 
     void generateAll();
 
