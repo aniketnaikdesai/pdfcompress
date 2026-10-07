@@ -223,3 +223,640 @@ Inspect (PDFium via PDFInspector) → Analyze (ImageAnalyzer heuristics, 5-way c
 
 ---
 Status: READY_FOR_PLAN
+
+---
+
+# PART II — Full Scope: Phases 1–8 (Goals B–I)
+
+> Phase 0 (Part I above, Status: READY_FOR_PLAN baseline with Appendix A + B) is
+> COMPLETE and locked. Everything below EXTENDS it — no Phase 0 section above is
+> rewritten. Verified-existing baseline (commits 67a54b9/9441c8c) is ground truth:
+> per-item stripping options WITH profile defaults (`OptimizationOptions::forProfile`),
+> metadata stripping, linearization off-by-default, 3-profile GUI picker + CLI
+> `--profile`, GTest + CTest wiring, corpus generator (14 types), benchmark script,
+> and granular `OptimizationResult` ALL ALREADY EXIST. Phases 1–8 verify-and-complete
+> where code exists and build-only where Appendix A proves a gap (RIGHT/PARTIAL items).
+> Genuinely-open items from §1 re-verification: no effective-DPI downsampling (RIGHT),
+> slider forces JPEG for Screenshot/LineArt only not all classes (PARTIAL,
+> DecisionEngine.cpp:51-71), monochrome=zlib no JBIG2 (RIGHT), encrypted rejected
+> (RIGHT), CMYK skipped-not-transcoded (RIGHT nuance), structure partial / fonts not
+> (PARTIAL), PNG codec dead code never selected (RIGHT).
+
+## Standing Acceptance Criteria (apply to EVERY Phase 1–8)
+
+These gates are evaluated per-phase in addition to each phase's own AC. A phase is
+not done unless all standing gates pass on the 14-file canonical corpus
+(`$TMPDIR/pdfcompress_test_corpus`, password `test123` for encrypted.pdf):
+
+- **S1 — Tests pass:** `cmake --build build && ctest --test-dir build --output-on-failure`
+  is 100% green (allowed skip: render-diff `N/A` only when PDFium unavailable).
+- **S2 — Size guard:** no output is larger than its input unless `OptimizationResult`
+  (`imageBytesSaved` / stripped counts / `errorMessage`) explains the growth in both
+  `run_optimize` stdout and the benchmark TSV `Status` column. Tiny PDFs (<2KB) are
+  exempt from the reduction% gate but must still log the reason.
+- **S3 — Render match:** page-1 150-DPI pure-C++ PDFium render-diff SSIM ≥ 0.98 for
+  MaxQuality/Balanced and ≥ 0.95 for MaxCompression; `N/A` allowed only with TSV
+  header note `render-diff unavailable (PDFium C++ only)`. No Python in the path.
+- **S4 — Selectable text:** `diagnose` (or `qpdf --show-all-data`) shows font objects
+  preserved and text extractable after optimize, except where the active profile
+  explicitly strips the containing element (logged in result breakdown).
+- **S5 — Viewer check:** each phase's manual-test PDFs open in Preview + one other
+  viewer (Adobe Reader or Chrome) without repair dialogs.
+- **S6 — Per-phase benchmark before/after gate:** `benchmark/run_benchmark.sh` is run
+  on the same corpus before and after the phase's change; the phase's AC states the
+  expected direction (e.g. Phase 1: pdfcompress rows within ±2% unless stripping
+  newly enabled; Phase 3: photo/scan PDFs shrink vs Phase-2 baseline with SSIM still
+  ≥ gate). TSVs are kept (`benchmark_results_*.tsv`) and the delta is reported.
+- **S7 — CLI parity:** `run_optimize` keeps working and gains a flag for every new
+  user-visible option introduced by the phase; `diagnose` keeps working.
+- **S8 — Docs:** `USAGE.md` is updated for every user-visible change introduced by
+  the phase.
+- **S9 — Hygiene:** never overwrite input (`<input>_optimized.pdf` or `-o` path only);
+  per-image/page/cleanup steps wrapped with fallback to original + log (existing
+  `PDFOptimizer` try/catch + size-guard pattern); C++20 RAII, `-Wall -Wextra` clean
+  on `pdfcompress_core`; fully offline (PDFium fetch at configure time is the sole
+  exception); GUI work off the UI thread with cancel support.
+
+## Phase 1 (Goal B) — Structure & Profile-Defaults Verify-and-Complete
+
+**Problem statement.** Structure optimization (object streams, Flate recompress L9,
+stream dedup, per-item stripping, linearization option) and the three profile
+defaults are already implemented (`PDFOptimizer.h:27-64 forProfile`,
+`PDFOptimizer.cpp:68-137 strip branches, 334-398 dedup+writer`, GUI picker
+`main.cpp:63-66`, CLI flags). But no test locks the spec defaults
+(MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only /
+MaxCompression-strips-everything) and dedup/object-stream behavior is only
+incidentally covered. Phase 1 verifies the defaults against `forProfile`, adds
+verifier tests, and completes small gaps (e.g. `/AA` + `/OpenAction` non-JS handling,
+`--linearize` documentation) — it does NOT re-implement stripping.
+
+**Goals**
+- Lock `forProfile` defaults per profile with GTest verifier tests (7 strip booleans
+  + `linearize=false` + `recompressFlate=true` + `deduplicateStreams=true` per profile).
+- Verify object-stream mode (`qpdf_o_generate`), Flate recompress L9, unreferenced
+  object pruning, and dedup counting (`streamsDeduplicated`) on the corpus.
+- Confirm `run_optimize --strip-*/--no-strip-*` and `--linearize/--no-flate-recompress/--no-dedup`
+  round-trip to `OptimizationOptions` correctly.
+
+**Non-Goals**
+- No codec, DPI, JBIG2, font, encryption, or GUI redesign work (Phases 2–8).
+- No change to strip semantics — only verification + tests + doc gaps. (Locked 2026-10-04: `forProfile` defaults are normative — MaxQuality-strips-nothing / Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, `linearize=false`.)
+
+**Manual test PDFs (Phase 1):** `with_form.pdf`, `with_bookmarks_and_links.pdf`,
+`with_javascript.pdf`, `with_metadata.pdf`, `transparency.pdf` (+merged-dedup coverage),
+`text_only.pdf` (no-growth control).
+
+### User Journeys (Phase 1)
+
+#### J-B1 — Developer locks profile defaults
+- **Preconditions:** Master builds; corpus generated (14 files).
+- **Steps:** 1. Read `OptimizationOptions::forProfile` 2. Run new
+  `TEST(ProfileDefaults, ...)` per profile 3. Run `run_optimize <pdf> --profile
+  <each>` on the four stripping corpus PDFs and compare `OptimizationResult`
+  breakdowns.
+- **Postconditions:** Defaults table in USAGE.md matches code; tests pin it.
+- **Edge Cases:** User passes `--profile balanced --strip-bookmarks` (explicit flag
+  overrides profile default) → explicit flag wins and result logs the override.
+
+#### J-B2 — User strips selectively via GUI/CLI
+- **Preconditions:** GUI built; `with_javascript.pdf` + `with_metadata.pdf` present.
+- **Steps:** 1. Open GUI, pick Balanced, uncheck "Strip JavaScript" 2. Optimize
+  3. Re-run via CLI with `--no-strip-js`.
+- **Postconditions:** JS preserved when unchecked; metadata still stripped per default;
+  result breakdown shows `jsRemoved=0, metadataStripped=true`.
+- **Edge Cases:** PDF has `/OpenAction` that is a GoTo (not JavaScript) → stripping JS
+  must NOT remove it; verifier asserts GoTo survives.
+
+### Acceptance Criteria (Phase 1)
+
+#### AC-B1 — Profile defaults locked (verify, not build)
+- **Given** `OptimizationOptions::forProfile` as on master (MaxQuality all-false;
+  Balanced JS+metadata true, rest false; MaxCompression all-true; all
+  `linearize=false, recompressFlate=true, deduplicateStreams=true`)
+- **When** `TEST(ProfileDefaults, MaxQualityStripsNothing)`,
+  `TEST(ProfileDefaults, BalancedStripsJsAndMetadataOnly)`,
+  `TEST(ProfileDefaults, MaxCompressionStripsEverything)` run
+- **Then** each asserts all 7 strip booleans + 3 structural flags exactly; any
+  future default change fails the test and requires a requirements change first.
+
+#### AC-B2 — Stripping end-to-end per corpus type
+- **Given** the four stripping corpus PDFs with real dict keys
+- **When** optimized under each profile via `run_optimize --profile <p>`
+- **Then** MaxQuality removes 0 items on all four; Balanced removes JS (`jsRemoved≥1`
+  on `with_javascript.pdf`) and metadata (`metadataStripped=true` on
+  `with_metadata.pdf`) and nothing else; MaxCompression removes ≥1 item on each of
+  the four; non-JS `/OpenAction` GoTo survives all profiles.
+
+#### AC-B3 — Structural writer options verified
+- **Given** `photo_heavy.pdf` (multi-image) and the transparency/dedup PDF
+- **When** optimized with defaults (`deduplicateStreams=true, recompressFlate=true`)
+  vs `--no-dedup --no-flate-recompress`
+- **Then** default output is ≤ no-opt output; `streamsDeduplicated≥1` on the shared-
+  XObject PDF with defaults and `==0` with `--no-dedup`; `qpdf --check` clean both.
+
+#### AC-B4 — Phase 1 benchmark gate
+- **Given** TSV from before Phase 1 on the 14-file corpus
+- **When** re-run after Phase 1 (no compression-logic change expected)
+- **Then** pdfcompress rows are within ±2% size on every file (writer/flag-plumbing
+  only); any larger delta fails the phase.
+
+## Phase 2 (Goal C) — Codec-Selection Correctness
+
+**Problem statement.** `DecisionEngine.cpp:51-71` forces JPEG whenever the quality
+slider is active for Screenshot/LineArt (correct only for lossy classes), never
+selects the fully-implemented `PngCodec` (dead code — alpha silently flattened via
+`TJPF_RGBA`), always routes ScannedText to JP2 regardless of slider, and
+`PDFOptimizer.cpp:234-238` skips CMYK entirely (`imagesSkipped++`) to avoid
+`JpegCodec` RGBA corruption. Phase 2 scopes the slider to lossy classes only, wires
+PNG for alpha/lossless paths, and implements correct CMYK preservation (not blind
+transcoding).
+
+**Goals**
+- Slider (`qualityHint>0`) affects ONLY Photo/Screenshot/LineArt; Monochrome and
+  ScannedText ignore it (Monochrome always lossless; ScannedText profile-driven).
+- PNG selected for: alpha images (`hasAlpha`), and Screenshot/LineArt under
+  MaxQuality with no slider (replacing zlib where PNG is smaller — size guard decides).
+- CMYK images preserved with correct color space (ICC/DeviceCMYK round-trip, no
+  RGBA corruption); optimizer reports `imagesSkipped` only when preservation (not
+  optimization) was the correct action, with a logged reason. Opt-in transcoding
+  via `--transcode-cmyk-to-rgb` (CLI) + GUI checkbox per AC-C3b.
+- `run_optimize --quality` + `--profile` semantics documented in USAGE.md.
+
+**Non-Goals**
+- No downsampling (Phase 3), no JBIG2 (Phase 5). CMYK→RGB transcoding is IN scope
+  ONLY as an opt-in `--transcode-cmyk-to-rgb` flag per AC-C3b (default: preservation-only).
+
+**Manual test PDFs (Phase 2):** `screenshot_flat.pdf`, `line_art.pdf`,
+`photo_jpeg.pdf`, `transparency.pdf` (alpha), `cmyk_image.pdf`, `monochrome_bw.pdf`
+(control: stays zlib), `grayscale_scan.pdf` (control: stays JP2).
+
+### User Journeys (Phase 2)
+
+#### J-C1 — Screenshot compresses losslessly at MaxQuality, lossy with slider
+- **Preconditions:** `screenshot_flat.pdf` present; GUI/CLI built.
+- **Steps:** 1. `run_optimize shot.pdf --profile max-quality -o q.pdf` 2. Re-run with
+  `--quality 70` 3. Compare sizes + SSIM.
+- **Postconditions:** (1) uses PNG/zlib (FlateDecode) with SSIM 1.0; (2) uses JPEG
+  (DCTDecode) smaller with SSIM ≥ 0.98; filters recorded in result/diagnose.
+- **Edge Cases:** PNG output larger than original → size guard keeps original and
+  reports `imagesKeptOriginal=1` (never writes larger silently).
+
+#### J-C2 — CMYK PDF survives with color intact
+- **Preconditions:** `cmyk_image.pdf` present.
+- **Steps:** 1. Optimize Balanced 2. Open before/after in Chrome + Preview 3. `qpdf
+  --json` check ColorSpace.
+- **Postconditions:** Output ColorSpace still DeviceCMYK (or ICC-based CMYK), visual
+  match, no corruption; result logs skipped-with-reason or bytes saved.
+- **Edge Cases:** CMYK JPEG with Adobe APP14 transform → decoder must honor transform
+  or skip-with-log rather than corrupt.
+
+### Acceptance Criteria (Phase 2)
+
+#### AC-C1 — Slider scoped to lossy classes
+- **Given** one PDF per classification (photo, screenshot, line-art, scanned-text,
+  monochrome)
+- **When** each is optimized with `--profile max-quality --quality 70` vs `--profile
+  max-quality` without `--quality`
+- **Then** photo/screenshot/line-art outputs differ (slider honored, JPEG path);
+  scanned-text outputs are byte-comparable in codec choice (JP2 both, slider ignored);
+  monochrome outputs are byte-comparable (zlib/Flate both, slider ignored);
+  `TEST(DecisionEngine, SliderOnlyAffectsLossyClasses)` pins this mapping.
+
+#### AC-C2 — PNG wired (dead code eliminated)
+- **Given** `transparency.pdf` (hasAlpha) and `screenshot_flat.pdf`
+- **When** optimized `--profile max-quality` (no `--quality`)
+- **Then** alpha image filter is FlateDecode-or-PNG (never DCTDecode); alpha pixels
+  round-trip (render-diff SSIM 1.0 within rounding); `m_pngCodec` is reachable by at
+  least one `TEST(DecisionEngine, ...)`; JPEG-with-alpha flattening no longer occurs
+  on this path.
+
+#### AC-C3 — CMYK preserved, not corrupted
+- **Given** `cmyk_image.pdf`
+- **When** optimized under any profile
+- **Then** output passes `qpdf --check`, ColorSpace remains CMYK-family, renders match
+  (SSIM ≥ 0.98), and result is either `imagesSkipped=1` with reason logged or
+  `imageBytesSaved≥0` with color intact — never corrupted channels.
+
+#### AC-C3b — CMYK→RGB transcode opt-in (locked 2026-10-04)
+- **Given** `cmyk_image.pdf`
+- **When** optimized with `--transcode-cmyk-to-rgb` (or GUI checkbox checked)
+- **Then** output ColorSpace is DeviceRGB (or ICC-based sRGB), renders match the
+  original with SSIM ≥ 0.98 (standing gate S3 is the color-shift threshold), size
+  gate S2 applies, and the result breakdown logs `transcodedCmyk=1`; without the
+  flag, AC-C3 preservation behavior applies unchanged. Plan chooses the
+  implementation-side color-difference metric (e.g. ΔE sampling); the SSIM gate
+  above is the normative acceptance threshold.
+- **And** `run_optimize --help` lists `--transcode-cmyk-to-rgb`; USAGE.md documents
+  that transcoding may shift spot/press colors and is off by default.
+
+#### AC-C4 — Phase 2 benchmark gate
+- **Given** pre-Phase-2 TSV baseline
+- **When** re-run after Phase 2
+- **Then** screenshot/line-art MaxQuality rows change codec (Flate vs DCT) with SSIM
+  1.0; photo rows within ±5% (JPEG params only); cmyk row no longer silently skipped
+  without reason; all rows still satisfy S2–S5.
+
+## Phase 3 (Goal D) — Effective-DPI Downsampling
+
+**Problem statement.** Images are re-encoded at original pixel dimensions
+(`PDFOptimizer.cpp:214-215, 273-284` — no resize call; verified RIGHT). Oversampled
+scans/photos (e.g. 600 DPI placed at 2 inches = 1200px for 300px of print) bloat
+output. Current `PDFInspector.cpp:226-245` DPI calc is a page-size approximation, not
+the image CTM, so it cannot drive resampling. Phase 3 computes per-image effective
+DPI from the placement matrix and downsamples to profile targets with a floor.
+
+**Goals**
+- Effective DPI per image from CTM (image placement matrix, honoring crop/rotation);
+  fallback to page-size approximation only when CTM unavailable (logged).
+- Profile targets (defaults; CLI-overridable): MaxQuality 300 DPI, Balanced 150 DPI,
+  MaxCompression 96 DPI; never upscale; never downsample vector/thumbnail or images
+  already below target; minimum dimension floor 32px preserved. (Locked 2026-10-04.)
+- High-quality resample (e.g. Lanczos/bicubic) in the decode→analyze→resample→encode
+  path; `/Width /Height` + CTM updated consistently so print size is unchanged.
+
+**Non-Goals**
+- No change to codec choice logic (Phase 2 owns it); downsampling only changes pixel
+  dimensions fed to the existing path.
+
+**Manual test PDFs (Phase 3):** oversampled scan (600 DPI photo placed small),
+`photo_heavy.pdf`, `grayscale_scan.pdf`, `line_art.pdf` (edge preservation check),
+tiny-icon PDF (floor check: must NOT shrink below legibility).
+
+### User Journeys (Phase 3)
+
+#### J-D1 — Oversampled scan shrinks, print size unchanged
+- **Preconditions:** 600-DPI scan PDF present.
+- **Steps:** 1. `diagnose` shows effective DPI ~600 2. `run_optimize --profile
+  balanced` 3. Compare sizes + print dimensions (`qpdf --json` Width/Height + CTM).
+- **Postconditions:** Output ≥40% smaller than Phase-2 baseline on the oversampled
+  file; printed size identical; SSIM ≥ 0.98.
+- **Edge Cases:** Image with `/Interpolate` + tiny placed size (icon) → below floor:
+  kept at original dims, logged `imagesKeptOriginal`.
+
+### Acceptance Criteria (Phase 3)
+
+#### AC-D1 — CTM-based effective DPI
+- **Given** a PDF with one 1200×1200 image placed at 2×2in (→600 DPI) and one placed
+  at 8×8in (→150 DPI)
+- **When** `diagnose` (extended with effective-DPI column) runs
+- **Then** it reports ~600 and ~150 (±5%) respectively; page-size approximation is
+  no longer the source when CTM exists (`TEST(Inspector, EffectiveDpiFromCtm)`).
+
+#### AC-D2 — Profile targets + floor
+- **Given** the oversampled PDF + tiny-icon PDF
+- **When** optimized under each profile (`--dpi` unset, then `--dpi 200` override)
+- **Then** oversampled output dims ≈ targetDPI/printSize per profile (±10%) and never
+  larger than input dims; icon PDF dims unchanged under all profiles;
+  `run_optimize --help` lists `--dpi/--no-downsample`.
+
+#### AC-D3 — Phase 3 benchmark gate
+- **Given** pre-Phase-3 TSV
+- **When** re-run after Phase 3
+- **Then** oversampled/scan rows shrink ≥20% vs baseline with SSIM still ≥ gate;
+  already-at-target rows within ±3%; text_only/form/bookmark rows unchanged (±2%).
+
+## Phase 4 (Goal E) — GUI Batch UX: Progress, Cancel, Off-Thread, Stats
+
+**Problem statement.** Core batch works (drag-drop `DropHandler/DropOverlay`, sequential
+queue) but long jobs block the UI, cannot cancel, and before/after stats are CLI-only
+detail. Phase 4 moves work off the UI thread (QThreadPool), adds per-file + total
+progress, cancel, and a before/after summary (bytes, %, per-profile note), keeping the
+existing picker/slider/checkboxes.
+
+**Goals**
+- Off-UI-thread optimization with responsive GUI, per-file progress bar + overall
+  batch progress, cancel button that stops cleanly (partial outputs removed or marked).
+- Batch summary view: per-file original→optimized bytes + % + result breakdown;
+  errors shown per file without aborting the batch.
+- Keep existing controls (3-profile picker, slider 1–100 default 70, strip checkboxes,
+  linearize checkbox); USAGE.md documents the flow.
+
+**Non-Goals**
+- No new compression logic; no target-size ("fit ≤ N MB") mode in any phase
+  (locked NOT in scope 2026-10-04 — profile+slider+summary is sufficient).
+
+**Manual test PDFs (Phase 4):** batch of all 14 corpus PDFs incl. `encrypted.pdf`
+(error-path display check).
+
+### User Journeys (Phase 4)
+
+#### J-E1 — User drag-drops a batch, watches progress, cancels
+- **Preconditions:** GUI running; 14 corpus PDFs in a folder.
+- **Steps:** 1. Drop folder 2. Watch per-file + total progress 3. Press Cancel
+  mid-batch 4. Re-run to completion.
+- **Postconditions:** Cancel stops within 2s, completed files kept, in-flight file
+  has no half-written output; full run shows summary table.
+- **Edge Cases:** `encrypted.pdf` without password in batch → row shows
+  `FAILED (encrypted — password required)` with per-file Continue; batch completes.
+
+### Acceptance Criteria (Phase 4)
+
+#### AC-E1 — Responsive + cancellable batch
+- **Given** a 14-file batch optimizing (Balanced)
+- **When** the user presses Cancel after ≥1 file completes
+- **Then** no new file starts, the in-flight file finishes-or-rolls-back within 2s
+  (no truncated PDF left at the output path), UI remains responsive throughout
+  (event loop never blocked >100ms — verified by manual test + code inspection that
+  work runs on QThreadPool).
+
+#### AC-E2 — Summary stats
+- **Given** a completed batch
+- **When** the summary view is shown
+- **Then** each row shows filename, original bytes, output bytes, % saved, and
+  profile; totals row sums all three; failed files show reason from
+  `OptimizationResult.errorMessage`.
+
+## Phase 5 (Goal F) — JBIG2 Monochrome
+
+**Problem statement.** Monochrome correctly routes to lossless zlib
+(`DecisionEngine.cpp:68-71`) but JBIG2 (10–50% smaller on 1-bit scans) is not
+integrated (verified RIGHT; no jbig2enc in `vcpkg.json`, no JBIG2 ref in `src/`).
+Phase 5 integrates JBIG2 for true 1-bit images behind a profile rule (licensing
+accepted 2026-10-04: jbig2enc Apache-2.0 via vcpkg/vendored source).
+
+**Goals**
+- True 1-bit images (`/BitsPerComponent 1` + DeviceGray/CalGray) encode via JBIG2
+  (lossless mode default; lossy refinement only with explicit `--jbig2-lossy` flag).
+  Encoder: jbig2enc (Apache-2.0) via vcpkg or vendored source — accepted 2026-10-04.
+- Non-1-bit grayscale (`monochrome_bw.pdf` 8-bit concept) keeps current zlib path.
+- Size guard decides per image (JBIG2 bytes replace only if smaller); fallback to
+  zlib/original + log on encode failure.
+
+**Non-Goals**
+- No change to non-monochrome paths; no lossy-JBIG2-by-default (must stay lossless
+  unless user opts in).
+
+**Manual test PDFs (Phase 5):** true 1-bit scan PDF (new fixture: `/BitsPerComponent
+1`), `monochrome_bw.pdf` (8-bit control → still zlib), `grayscale_scan.pdf`
+(control → still JP2).
+
+### User Journeys (Phase 5)
+
+#### J-F1 — 1-bit scan uses JBIG2
+- **Preconditions:** 1-bit scan PDF present.
+- **Steps:** 1. `run_optimize scan1bit.pdf --profile balanced` 2. `qpdf --json` filter
+  check 3. Compare vs `--no-jbig2`.
+- **Postconditions:** Default output filter is JBIG2Decode and smaller than zlib path;
+  renders pixel-identical (SSIM 1.0); flag override works.
+- **Edge Cases:** jbig2enc unavailable at build → configure warns, codec disabled,
+  monochrome falls back to zlib with `imagesKeptOriginal`/log (build never breaks).
+
+### Acceptance Criteria (Phase 5)
+
+#### AC-F1 — JBIG2 for true 1-bit only
+- **Given** a 1-bit PDF and the 8-bit `monochrome_bw.pdf`
+- **When** optimized with defaults
+- **Then** 1-bit output uses JBIG2Decode and is ≤ zlib-path size; 8-bit output still
+  uses FlateDecode; `TEST(DecisionEngine, MonochromeBitDepthRoutesJbig2)` pins routing.
+
+#### AC-F2 — Lossless default + fallback
+- **Given** the 1-bit PDF
+- **When** optimized default vs `--jbig2-lossy` vs encoder-failure injection
+- **Then** default is pixel-identical (SSIM 1.0); `--jbig2-lossy` is smaller-or-equal
+  with SSIM ≥ 0.99; encoder failure yields valid PDF via zlib/original + logged reason.
+
+#### AC-F3 — Phase 5 benchmark gate
+- **Given** pre-Phase-5 TSV
+- **When** re-run after Phase 5
+- **Then** 1-bit scan row shrinks ≥10% vs zlib baseline at SSIM 1.0; all non-1-bit
+  rows within ±2%.
+
+## Phase 6 (Goal G) — Font Dedup + Subsetting (Selectable Text Preserved)
+
+**Problem statement.** Structure is partially optimized (stream dedup, object streams —
+PARTIAL) but fonts are untouched: duplicate font descriptors/embedded subsets bloat
+merged PDFs and no subsetting exists (grep font only in inspector emptyPDF). Phase 6
+deduplicates identical fonts and subsets embedded fonts to used glyphs, never breaking
+selectable text (standing gate S4 is the hard constraint).
+
+**Goals**
+- Byte-identical font program dedup (same hash-join pattern as stream dedup, with
+  the ESC-001 indirect-handle guard).
+- Glyph-subsetting for embedded TrueType/OpenType (used-glyphs only) via
+  HarfBuzz `hb-subset` (vcpkg dependency — locked 2026-10-04) behind a
+  `deduplicateStreams`-adjacent flag (`--subset-fonts`, default ON for Balanced +
+  MaxCompression, OFF for MaxQuality — matrix locked 2026-10-04; behavior matrix
+  in USAGE.md).
+- `/ToUnicode` preserved whenever subsetting; text extraction before/after identical
+  on corpus + manual merged-font PDF.
+
+**Non-Goals**
+- No OCR, no font format conversion (OTF→TTF etc.), no unembedding of fonts.
+
+**Manual test PDFs (Phase 6):** merged-duplicate-fonts PDF (shared font XObject),
+`text_only.pdf`, `with_form.pdf` (field text must keep working), large mixed-text PDF.
+
+### User Journeys (Phase 6)
+
+#### J-G1 — Merged PDF dedups + subsets fonts, text intact
+- **Preconditions:** Merged-font PDF present.
+- **Steps:** 1. Extract text before (`pdftotext`/`diagnose`) 2. Optimize Balanced
+  3. Extract text after + compare sizes.
+- **Postconditions:** Output smaller; extracted text identical; fonts still embedded
+  (no tofu in Preview/Chrome).
+- **Edge Cases:** Form-field font subset would break editing → form fonts are never
+  subset, only deduped; result logs the exemption.
+
+### Acceptance Criteria (Phase 6)
+
+#### AC-G1 — Font dedup
+- **Given** a PDF with the same font program embedded twice (distinct objects)
+- **When** optimized with defaults
+- **Then** output embeds one copy (`qpdf --json` shows shared reference),
+  extracted text identical, `qpdf --check` clean.
+
+#### AC-G2 — Subsetting with ToUnicode intact
+- **Given** a text PDF embedding a full font but using <30% of glyphs
+- **When** optimized `--profile balanced` (subset ON) vs `--profile max-quality`
+  (subset OFF)
+- **Then** Balanced output is smaller with byte-identical extracted text and a
+  present `/ToUnicode`; MaxQuality output preserves the full program.
+
+#### AC-G3 — Phase 6 benchmark gate
+- **Given** pre-Phase-6 TSV
+- **When** re-run after Phase 6
+- **Then** font-heavy rows (text_only, merged-fonts, form) shrink vs baseline with
+  text-identical; image-only rows within ±2%.
+
+## Phase 7 (Goal H) — Encrypted PDFs: Password UX + Re-encryption
+
+**Problem statement.** Encrypted PDFs are rejected (`PDFInspector.cpp:88-94`
+`FPDF_ERR_PASSWORD` throw; `PDFOptimizer.cpp:61` no-password `processFile` — verified
+RIGHT). Corpus uses `test123` only as a fixture. Production needs a password flow:
+prompt, pass to QPDF/PDFium, optimize, and write unencrypted unless the user opts to
+re-encrypt (default locked 2026-10-04: output unencrypted unless user opts in).
+
+**Goals**
+- GUI password dialog on `isEncrypted` (per-file in batch, with per-file cancel that
+  marks the row and continues); `run_optimize --password <pw>` (+ `PDFOPTIMIZE_PASSWORD`
+  env fallback for scripts — never logged).
+- Decrypt → optimize → write unencrypted by default; `--re-encrypt` (CLI) /
+  "Re-encrypt with same password" checkbox (GUI) preserves AES-128 when requested.
+  (Default locked 2026-10-04: unencrypted output unless opted.)
+- Wrong password → clean `errorMessage` (no crash, no retry loop); batch continues.
+
+**Non-Goals**
+- No password cracking/recovery; no change to encryption strength beyond preserving
+  input parameters on re-encrypt.
+
+**Manual test PDFs (Phase 7):** `encrypted.pdf` (`test123`), wrong-password attempt,
+batch mixing encrypted + plain PDFs.
+
+### User Journeys (Phase 7)
+
+#### J-H1 — User optimizes an encrypted PDF
+- **Preconditions:** GUI running; `encrypted.pdf` (test123) present.
+- **Steps:** 1. Drop file 2. Password dialog appears 3. Enter `test123` 4. Optimize
+  5. Open output (no password) 6. Re-run with re-encrypt checked.
+- **Postconditions:** (5) output opens without password, smaller; (6) output requires
+  the password again.
+- **Edge Cases:** Wrong password → inline error `Incorrect password`, 3 attempts then
+  row marked failed; batch continues; password string never written to logs/TSV.
+
+### Acceptance Criteria (Phase 7)
+
+#### AC-H1 — Password flow end-to-end
+- **Given** `encrypted.pdf` (test123)
+- **When** `run_optimize encrypted.pdf --password test123 -o out.pdf` and again with
+  `--password wrong` and again without `--password`
+- **Then** correct password → success, output unencrypted (`isEncrypted==false`);
+  wrong/missing → `success=false`, `errorMessage` set (`Incorrect password` /
+  `Encrypted PDF — password required`), no crash, no output written.
+
+#### AC-H2 — Re-encrypt opt-in
+- **Given** `encrypted.pdf`
+- **When** optimized `--password test123 --re-encrypt`
+- **Then** output requires `test123` to open (`isEncrypted==true`), renders match,
+  size gate S2 still holds.
+
+## Phase 8 (Goal I) — Performance, Streaming, Packaging & CI Hardening
+
+**Problem statement.**ril Large PDFs (>500MB per original plan §8) risk memory blowup
+(whole-document decode hold) and slow single-threaded page loops; packaging (DMG,
+code-sign, sandbox entitlements) and CI benchmark gating are ad hoc. Phase 8 makes
+large-file behavior safe, parallelizes page work within the existing QThreadPool
+direction, and locks CI/packaging so every earlier phase stays green.
+
+**Goals**
+- Memory-conscious streaming: one-image-at-a-time discipline kept; peak RSS measured
+  and capped (target: <1GB on a 500MB mixed PDF — exact cap locked after first
+  measurement; benchmark reports peak RSS per file).
+- Parallel page processing (thread pool, deterministic output regardless of thread
+  count); no data races on QPDF handles (existing per-image guard pattern extended).
+- Packaging: signed/notarized DMG path documented, Qt frameworks bundled, sandbox
+  entitlements listed; CI runs corpus + benchmark + S1–S5 gates (missing optional
+  tools → SKIPPED).
+
+**Non-Goals**
+- No new compression features; performance work must not change output bytes vs
+  single-threaded run (determinism gate below).
+
+**Manual test PDFs (Phase 8):** large mixed PDF (≥200MB staged locally, NOT committed),
+`photo_heavy.pdf` (parallel determinism check), full 14-file corpus (CI matrix).
+
+### User Journeys (Phase 8)
+
+#### J-I1 — Developer runs CI on a large PDF
+- **Preconditions:** Large PDF staged outside git; CI image with optional tools.
+- **Steps:** 1. `run_optimize big.pdf` with `/usr/bin/time -l` (RSS) 2. Compare
+  single-thread vs pooled output hashes 3. Check CI TSV.
+- **Postconditions:** Peak RSS under cap; outputs byte-comparable across thread
+  counts; CI green with SKIPPED (not FAILED) for missing tools.
+- **Edge Cases:** OOM-risk file (>available RAM) → streams spilled via `$TMPDIR`
+  (`NSTemporaryDirectory`), never held fully in RAM; progress still reported.
+
+### Acceptance Criteria (Phase 8)
+
+#### AC-I1 — Streaming memory cap
+- **Given** a ≥200MB mixed PDF staged in `$TMPDIR` (never committed)
+- **When** optimized while sampling peak RSS
+- **Then** peak RSS ≤ locked cap (≤1GB default pending measurement) and output
+  satisfies S2–S5; TSV gains a `PeakRSS` column.
+
+#### AC-I2 — Deterministic parallelism
+- **Given** `photo_heavy.pdf`
+- **When** optimized with `--jobs 1` vs `--jobs 4` (new flag, default = core count)
+- **Then** both outputs are valid, both satisfy S2–S5, and rendered pages are
+  pixel-identical across thread counts (SSIM 1.0 between the two outputs).
+
+#### AC-I3 — Packaging + CI matrix
+- **Given** a clean checkout on macOS
+- **When** CI runs `cmake -B build … && cmake --build build && ctest` +
+  `benchmark/run_benchmark.sh`
+- **Then** all gates pass; `.app` bundles `libpdfium.dylib` (no `DYLD_*` needed to
+  launch); DMG/signing steps documented in USAGE.md; missing `gs`/`ocrmypdf` rows
+  are SKIPPED.
+
+---
+
+## Constraints (additions for Phases 1–8; Phase 0 constraints still apply)
+
+- **Offline only** extends to all phases: JBIG2 encoder, subsetter, and benchmark
+  comparators must run locally; no network calls in app/tests/benchmark (PDFium
+  fetch at configure time remains the sole exception).
+- **Tech stack hard constraint:** C++20 RAII, `-Wall -Wextra` clean; `core/` +
+  `codecs/` (new codecs implement `ImageCodec`) + `tools/` layout; GTest locked (no
+  Catch2 migration); QPDF + PDFium retained; vcpkg manifest stays the dependency
+  channel (jbig2enc + HarfBuzz hb-subset added via vcpkg or vendored source — no Homebrew-only
+  runtime dependency).
+- **Safety invariants (all phases):** never overwrite input; never emit larger output
+  silently (S2); per-image/page/cleanup fallback + log; `$TMPDIR` for ephemera;
+  corpus stays exactly the 14 canonical files (new fixtures beyond the 14 need a
+  requirements change); corpus `test123` password is TEST-ONLY (production prompts).
+- **Render-diff purity:** all quality numbers stay pure-C++ PDFium; no Python.
+- **GUI discipline:** compression off the UI thread with cancel (Phase 4 sets the
+  pattern; later phases follow it).
+- **Platform (locked 2026-10-04):** macOS-only for Phases 1–8; packaging = signed DMG
+  per AC-I3; CI matrix is macOS (no Windows/Linux legs required).
+
+## Glossary (additions B–I)
+
+- **Effective DPI:** pixels ÷ print inches from the image placement CTM (not page
+  size); drives Phase 3 downsampling.
+- **CTM (Current Transformation Matrix):** PDF graphics-state matrix placing an
+  image XObject on the page; source of print size for DPI.
+- **JBIG2 (jbig2enc):** lossless/lossy codec for 1-bit bi-level images; Phase 5.
+- **CMYK transcode (opt-in):** `--transcode-cmyk-to-rgb` conversion of CMYK images to
+  RGB for extra savings; OFF by default, gated by SSIM ≥ 0.98 render match (AC-C3b);
+  Phase 2.
+- **Font subsetting:** rewriting an embedded font to contain only used glyphs while
+  keeping `/ToUnicode` so text stays selectable; Phase 6.
+- **Re-encrypt:** writing the optimized PDF with encryption again (same password /
+  parameters) instead of the default unencrypted output; Phase 7.
+- **Target DPI / DPI floor:** per-profile resampling target (e.g. 300/150/96) and the
+  minimum dimension below which downsampling stops; Phase 3.
+- **Peak RSS:** maximum resident set size during one optimization; Phase 8 metric.
+
+## Assumptions Log (additions for Phases 1–8)
+
+| Assumption | Rationale | Confirmed? | Date |
+|---|---|---|---|
+| `forProfile` spec defaults (MaxQuality-strips-nothing / Balanced-strips-JS+metadata / MaxCompression-strips-everything) match user brief and stay locked unless a requirements change is filed | Verified against `PDFOptimizer.h:27-64` 2026-10-04; brief explicitly says verify-not-assume | y | 2026-10-04 |
+| Slider scope fix (lossy-only) + PNG wiring + CMYK preservation (+ opt-in `--transcode-cmyk-to-rgb` per AC-C3b) are all in Phase 2, not split | Single DecisionEngine/optimizer area; splitting would triple benchmark churn; transcode locked 2026-10-04 | y | 2026-10-04 |
+| Downsample targets 300/150/96 DPI with 32px floor are defaults; `--dpi/--no-downsample` override | Common print/web values; floor prevents icon destruction; confirmed 2026-10-04 | y | 2026-10-04 |
+| JBIG2 (jbig2enc Apache-2.0 via vcpkg/vendored) default lossless-only; lossy only via explicit flag | Lossy JBIG2 can alter glyphs; safe default required; licensing accepted 2026-10-04 | y | 2026-10-04 |
+| Font subset (HarfBuzz hb-subset) ON for Balanced/MaxCompression, OFF for MaxQuality | Matches strip-philosophy of profiles; subsetter + matrix locked 2026-10-04 | y | 2026-10-04 |
+| Re-encrypt default OFF (output unencrypted unless opted) | Matches test-fixture behavior; confirmed 2026-10-04 | y | 2026-10-04 |
+| Parallelism default = hardware core count via `--jobs` | Standard practice; determinism gate guards it | n | 2026-10-04 |
+
+## Risks / Unknowns (additions for Phases 1–8)
+
+| Risk | Severity | Likelihood | Mitigation |
+|---|---|---|---|
+| JBIG2 encoder license (jbig2enc is Apache-2.0; older JBIG2 libs GPL) blocks bundling | H | L | Accepted 2026-10-04 (Apache-2.0 via vcpkg/vendored); fallback retained: keep zlib with documented gap if integration fails |
+| CTM extraction via QPDF/PDFium placement matrix is inaccurate for rotated/cropped images | H | M | AC-D1 fixtures cover 600-vs-150 + rotation; fallback to page-size approx + log |
+| Downsampling + recompression double-degrades already-JPEG images | M | H | Downsample in pixel domain before encode; SSIM gate catches over-degradation |
+| Font subsetting breaks form editing or CJK ToUnicode | H | M | Never subset form fonts; CJK fixtures in manual tests; text-identity gate per phase |
+| Password strings leak into logs/TSV/crash dumps | H | L | Never log password; env-var path; code-review checklist item for Phase 7 |
+| CMYK→preserve still larger than original on some files (S2 tension) | M | M | Skip-with-reason counts as S2 explanation; benchmark gate documents it |
+| Parallel QPDF handle races cause nondeterministic output | M | M | AC-I2 determinism gate; thread-local buffers, join-before-write |
+| Large-PDF RSS cap unachievable without temp-file spill redesign | M | M | Phase 8 measures first, locks cap second; spill to `$TMPDIR` allowed |
+| Windows/Linux port requested mid-program (scope creep) | M | L | Locked 2026-10-04: macOS-only for Phases 1–8 |
+
+---
+
+All 8 Phase 1–8 open questions answered 2026-10-04 (see `open_questions.md`); no
+blocking gap remains. CMYK-transcode color-shift threshold defined in AC-C3b (SSIM ≥ 0.98
+render match; Plan chooses the implementation-side ΔE metric).
+
+Status: READY_FOR_PLAN

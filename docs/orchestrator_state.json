@@ -1,9 +1,9 @@
 {
-  "current_stage": "code_reviewer",
+  "current_stage": "paused_user_input",
   "invocation_reason": "normal_progression",
   "plan_validator_retries": 0,
   "pending": null,
-  "last_invoked": {"agent": "code_reviewer", "at": "2026-10-04T03:30:00Z", "owned_mtimes_before": {}},
-  "last_updated": "2026-10-04T03:30:00Z",
-  "last_status": "PIPELINE_COMPLETE"
+  "last_invoked": {"agent": "plan_artifact_editor_validator", "at": "2026-10-04T04:25:00Z", "owned_mtimes_before": {}},
+  "last_updated": "2026-10-04T04:25:00Z",
+  "last_status": "FULL_SCOPE_PLAN_APPROVED"
 }

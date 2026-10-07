@@ -1,8 +1,19 @@
-# Architecture — PDF Compressor Phase 0: Verification and Baseline
+# Architecture — PDF Compressor (Phase 0 Baseline + Phases 1–8)
+
+> **Phase 0 sections below are retained verbatim from the validated Phase-0
+> canonical artifact** (commits 67a54b9/9441c8c) as ground truth. Everything
+> under "**Phases 1–8**" headings EXTENDS them — no Phase 0 section is
+> rewritten. Verified-existing baseline: per-item stripping options WITH
+> profile defaults (`OptimizationOptions::forProfile`), metadata stripping,
+> linearization off-by-default, 3-profile GUI picker + CLI `--profile`,
+> GTest + CTest wiring, corpus generator (14 types), benchmark script, and
+> granular `OptimizationResult` ALL ALREADY EXIST. Phases 1–8
+> verify-and-complete where code exists and build-only where the Phase-0
+> Appendix A proves a gap (RIGHT/PARTIAL items).
 
 ## Codebase Summary (Existing Repo — Factual Inventory)
 
-> Inventory only — no proposal. Graphify was invoked first (`graphify-out/graph.json`: 350 nodes / 549 edges, 15 communities). Manual repo survey verified graph findings against `src/`, `tests/`, `benchmark/`, `tools/`, `CMakeLists.txt`, `vcpkg.json`, `cmake/FetchPDFium.cmake`, `USAGE.md`.
+> Inventory only — no proposal. Graphify was invoked first (`graphify-out/graph.json`: 404 nodes — Codebase Summary cross-checked; 350 nodes / 549 edges at Phase-0 validation). Manual repo survey verified graph findings against `src/`, `tests/`, `benchmark/`, `tools/`, `CMakeLists.txt`, `vcpkg.json`, `cmake/FetchPDFium.cmake`, `USAGE.md`.
 > This section is retained from the validated proposal as evidence for Existing Repo Compliance.
 
 ### Existing Data Models / Entities
@@ -32,8 +43,8 @@
 | **Codec layer** [existing] | `src/codecs/JpegCodec.cpp`, `PngCodec.cpp`, `Jp2Codec.cpp`, `ZlibCodec.cpp`, `CodecInterface.h` | `ImageCodec::encode(pixels, CompressionParams)→bytes`: JPEG via TurboJPEG `tjCompress2`, JP2 via OpenJPEG codestream, PNG via libpng, Zlib via `compress2` level 9 / libdeflate |
 | **CLI — run_optimize** [existing] | `tools/run_optimize.cpp` (166 LOC) | Flags `--profile`, `--quality`, `--strip-*/--no-strip-*`, `--linearize`, `--no-flate-recompress`, `--no-dedup`, `-o/--output`, `--help`; prints detailed breakdown |
 | **CLI — diagnose** [existing] | `tools/diagnose.cpp` (85 LOC) | Listing: pages, images, dims, colorSpace, filter, stream sizes |
-| **Tests** [existing] | `tests/test_image_analyzer.cpp`, `test_decision_engine.cpp`, `test_codecs.cpp`, `test_pdf_optimizer.cpp`, `tests/test_corpus_generator.cpp/.h` | GTest `TEST(Suite,Case)` — 12 CTests via `gtest_discover_tests`; `TestCorpusGenerator` with QPDF emptyPDF generation (several stubs) |
-| **Benchmark & corpus** [existing] | `benchmark/generate_corpus.cpp` (9 LOC), `tests/test_corpus_generator.cpp` (153 LOC), `benchmark/run_benchmark.sh` (58 LOC) | `generate_corpus` prints `Corpus generated at: "<TMPDIR>"`; `run_benchmark.sh` loops corpus but uses invalid `qpdf --optimize`, lacks GS/ocrmypdf, lacks SSIM, time in seconds not ms |
+| **Tests** [existing] | `tests/test_image_analyzer.cpp`, `test_decision_engine.cpp`, `test_codecs.cpp`, `test_pdf_optimizer.cpp`, `tests/test_corpus_generator.cpp/.h` | GTest `TEST(Suite,Case)` — CTests via `gtest_discover_tests`; `TestCorpusGenerator` with QPDF emptyPDF generation |
+| **Benchmark & corpus** [existing] | `benchmark/generate_corpus.cpp` (9 LOC), `tests/test_corpus_generator.cpp` (153 LOC), `benchmark/run_benchmark.sh` (58 LOC) | `generate_corpus` prints `Corpus generated at: "<TMPDIR>"`; `run_benchmark.sh` loops corpus with valid tool invocations, `command -v` guards, pure-C++ SSIM |
 | **Build** [existing] | `CMakeLists.txt`, `cmake/FetchPDFium.cmake`, `vcpkg.json`, `third_party/vcpkg` | `pdfcompress_core` STATIC lib, `PDFCompressor` MACOSX_BUNDLE, `run_optimize`, `diagnose`, `pdfcompress_tests`, `generate_corpus`; PDFium from `bblanchon/pdfium-binaries chromium/7920`, `libpdfium.dylib` bundled via `install_name_tool` |
 
 ### Existing External Integrations
@@ -44,7 +55,7 @@
 | **QPDF** [existing] | Rewriting, stripping, linearization, object-stream mode, `Pl_Flate`; also corpus generation via `QPDF::emptyPDF()` + `QPDFObjectHandle::newStream`/`parse` |
 | **libjpeg-turbo (TurboJPEG)** [existing] | JPEG encode/decode |
 | **OpenJPEG** [existing] | JPEG 2000 codestream (J2K) — `openjp2` |
-| **libpng** [existing] | PNG encode (implemented but unused — dead code) |
+| **libpng** [existing] | PNG encode (dead code until Phase 2 wires it) |
 | **zlib / libdeflate** [existing] | Flate recompress level 9; ZlibCodec via `compress2` |
 | **Qt6** [existing] | GUI (QMainWindow, QComboBox, QSlider, drag-drop) |
 | **GTest** [existing] | `find_package(GTest CONFIG REQUIRED)`, `gtest_discover_tests`, `BUILD_TESTING=ON` |
@@ -54,13 +65,34 @@
 
 Claims 4,5,6,7,10 from USAGE.md are **already FIXED on master** and are treated as verified facts, not Phase 0 work: per-item stripping (`PDFOptimizer.h:13-26`, `PDFOptimizer.cpp:68-137`, `main.cpp:88-106`), metadata stripping (`PDFOptimizer.cpp:119-144,320-332`), linearization off by default (`linearize=false`, `main.cpp:96`), profile picker in GUI+CLI (`main.cpp:63-66`, `run_optimize.cpp:46-55`), 12 GTests + benchmark/results breakdown (`CMakeLists.txt:135-163`, `PDFOptimizer.h:67-92`). Phase 0 only verifies and hardens.
 
+### Verified Deltas for Phases 1–8 (survey 2026-10-04, re-verified by Validator)
+
+> Labels `[existing]` / `[new]` / `[new/changed]` in the proposal sections
+> below apply to the architecture, not to this inventory. Validator confirmed
+> each delta against the current tree (`graphify-out/graph.json`: 404 nodes;
+> targeted file reads).
+
+| Fact | Evidence | Phase it drives |
+|---|---|---|
+| Slider scoping gap confirmed: Screenshot/LineArt force JPEG when `qualityHint>0`; ScannedText always JP2; Monochrome always zlib; `m_pngCodec` constructed but never selected | `src/core/DecisionEngine.cpp:13,22-71` (switch never assigns `m_pngCodec`) | Phase 2 |
+| CMYK skipped (`imagesSkipped++`, channels==4 path) to avoid RGBA corruption | `src/core/PDFOptimizer.cpp:236,269` | Phase 2 |
+| DPI calc is page-size approximation (`calculateDPI(meta, page)`), not CTM; `CompressionParams.targetDPI` carried but unused for resampling | `src/core/PDFInspector.cpp:164,226`, `ImageMetadata.h` | Phase 3 |
+| No JBIG2 encoder in tree; only `StreamFilter::JBIG2Decode` enum + string mapping exist (parse support, no encode) | `grep jbig2` → only `PDFInspector.cpp:210`, `ImageMetadata.h:26,108`; nothing in `vcpkg.json`/`CMakeLists.txt` | Phase 5 |
+| No HarfBuzz/hb-subset in tree; font handling is inspect-only (emptyPDF Helvetica) | `grep harfbuzz/HarfBuzz` → zero hits | Phase 6 |
+| GUI has profile picker + quality slider, but **no** QThreadPool/off-thread work, no progress/cancel, no password dialog | `grep QThreadPool|Cancel` in `src/main.cpp` → zero hits (picker `main.cpp:63-66`, slider `:75-78` confirmed) | Phases 4, 7 |
+| No `--jobs`, `--dpi`, `--transcode-cmyk-to-rgb`, `--jbig2-lossy`, `--subset-fonts`, `--password`, `--re-encrypt` flags exist yet | `tools/run_optimize.cpp` flag list (AC6 set only) | Phases 2,3,5,6,7,8 |
+
 ---
 
 ## Summary
 
-Phase 0 hardens the verification baseline without touching the compression pipeline: six corpus stubs are replaced with real QPDF implementations covering 14 deterministic types in `$TMPDIR/pdfcompress_test_corpus`, `benchmark/run_benchmark.sh` is fixed to valid QPDF/Ghostscript/ocrmypdf invocations with `command -v` guards, and a focused pure-C++ PDFium render-diff helper (`tools/render_diff.cpp`) renders page 1 at 150 DPI and computes SSIM/PSNR in-process — no Python dependency. All changes stay in `tests/`, `benchmark/`, `tools/` and `CMakeLists.txt` test wiring.
+Phase 0 hardens the verification baseline without touching the compression pipeline: corpus stubs are replaced with real QPDF implementations covering 14 deterministic types in `$TMPDIR/pdfcompress_test_corpus`, `benchmark/run_benchmark.sh` is fixed to valid QPDF/Ghostscript/ocrmypdf invocations with `command -v` guards, and a focused pure-C++ PDFium render-diff helper (`tools/render_diff.cpp`) renders page 1 at 150 DPI and computes SSIM/PSNR in-process — no Python dependency. All changes stay in `tests/`, `benchmark/`, `tools/` and `CMakeLists.txt` test wiring.
+
+Phases 1–8 build strictly on the locked Phase-0 baseline: Phase 1 verifies-and-locks existing structure/profile behavior with tests only; Phases 2–3 fix codec routing (slider scoping, PNG wiring, CMYK preservation + opt-in transcode) and add CTM-based DPI downsampling; Phase 4 moves batch work off the UI thread with progress/cancel/stats; Phase 5 adds optional JBIG2 for true 1-bit; Phase 6 adds font dedup + HarfBuzz subsetting; Phase 7 adds password UX with unencrypted-by-default output; Phase 8 hardens streaming memory, deterministic parallelism, and macOS packaging/CI. Two new third-party deps (jbig2enc optional, HarfBuzz required) arrive via vcpkg/vendored source; everything else is additive inside `core/` + `codecs/` + `tools/` with per-phase benchmark gates.
 
 ## Tech Stack Decisions
+
+### Phase 0 (retained — hard constraints)
 
 | # | Decision | Choice | Rationale | Alternatives considered |
 |---|---|---|---|---|
@@ -69,8 +101,8 @@ Phase 0 hardens the verification baseline without touching the compression pipel
 | 3 | Build system | **CMake + Ninja + vcpkg manifest** (`third_party/vcpkg`) [existing] | Required for PDFium fetch, Qt, QPDF | — |
 | 4 | PDF inspection/rendering | **PDFium via cmake/FetchPDFium.cmake → bblanchon/pdfium-binaries chromium/7920** [existing] | Sole inspection lib; also required for pure-C++ render-diff per AC4 | — |
 | 5 | PDF rewriting | **QPDF** [existing] | Structure, stripping, linearization, object streams, deterministic ID; also corpus generation only-dependency | — |
-| 6 | Image codecs | **libjpeg-turbo (TurboJPEG), OpenJPEG (J2K), libpng, zlib/libdeflate** [existing] | Already linked in `pdfcompress_core` | libjxl/JBIG2 deferred to Phases F/?? — not Phase 0 |
-| 7 | Test framework | **GTest via vcpkg** (`GTest::gtest`/`gtest_main`, `gtest_discover_tests`, `BUILD_TESTING=ON`) [existing — locked] | 12 tests already pass; auto-discovery; switching to Catch2 would rewrite `vcpkg.json`+CMake for zero benefit in no-behavior-change phase. Locked 2026-10-03 | **Catch2** — rejected per Assumptions Log |
+| 6 | Image codecs | **libjpeg-turbo (TurboJPEG), OpenJPEG (J2K), libpng, zlib/libdeflate** [existing] | Already linked in `pdfcompress_core` | libjxl/JBIG2 deferred — not Phase 0 |
+| 7 | Test framework | **GTest via vcpkg** (`GTest::gtest`/`gtest_main`, `gtest_discover_tests`, `BUILD_TESTING=ON`) [existing — locked] | Tests already pass; auto-discovery; switching to Catch2 would rewrite `vcpkg.json`+CMake for zero benefit in no-behavior-change phase. Locked 2026-10-03 | **Catch2** — rejected per Assumptions Log |
 | 8 | Corpus generation lib | **QPDF only** (no PDFium render, no external binaries) [existing] | `QPDF::emptyPDF()` + `QPDFObjectHandle::newStream/parse` + `QPDFWriter` already used; keeps licensed-free invariant; `setDeterministicID(true)` for reproducibility | Using PDFium to render corpus — rejected |
 | 9 | Corpus storage | **`$TMPDIR/pdfcompress_test_corpus` ephemeral, not committed** [existing — locked] | Avoids binary blobs in git; confirmed 2026-10-03; printed as `Corpus generated at: "<path>"` tee'd to `corpus_info.txt` | `tests/corpus/` fixtures — rejected per AC3 |
 | 10 | Encrypted fixture encryption | **QPDF 128-bit AES, user password `test123`, no owner password, R=6 AES-128 (fallback R3)** [new] | Makes `PDFInspector::isEncrypted` true (FPDF_ERR_PASSWORD), optimizer returns `errorMessage` without crash (AC7); production password prompt is Phase H | — |
@@ -84,7 +116,24 @@ Phase 0 hardens the verification baseline without touching the compression pipel
 
 > PNG wire-up, effective-DPI downsampling (Phase D), JBIG2 (Phase F), font dedup/subsetting (Phase G), password GUI dialog (Phase H) are **explicitly deferred** per AC3/AC4 and design_gaps — noted but not designed here.
 
+### Phases 1–8 (additions — existing/constrained choices first, then new)
+
+| # | Decision | Choice | Rationale | Alternatives considered |
+|---|---|---|---|---|
+| 18 | Language | **C++20, RAII, `-Wall -Wextra` clean** [existing — hard constraint] | Locked stack; all new code follows existing hygiene | — |
+| 19 | GUI / build / PDF libs | **Qt6 / CMake+Ninja+vcpkg / PDFium + QPDF** [existing — hard constraint] | Locked; QThreadPool (already a Qt6 module) is the threading vehicle, not a new dep | std::thread pool — rejected (Qt signal/slot + cancel integrate with QThreadPool) |
+| 20 | Image codecs (existing) | **libjpeg-turbo, OpenJPEG J2K, libpng, zlib/libdeflate** [existing] | Unchanged; PNG goes from dead code to selected codec with no new dep | — |
+| 21 | Test framework | **GTest + CTest** [existing — locked] | Locked per Phase 0; new routing/DPI/JBIG2/font/password tests are `TEST(Suite,Case)` | — |
+| 22 | JBIG2 encoder | **jbig2enc (Apache-2.0) via vcpkg or vendored source, OPTIONAL dep** [new] | Locked 2026-10-04 (OQ F-1); lossless-default; configure warns + falls back to zlib when unavailable so build never breaks | GPL JBIG2 libs — rejected (license); Leptonica wrappers — rejected (extra dep for no gain) |
+| 23 | Font subsetter | **HarfBuzz `hb-subset` via vcpkg** [new] | Locked 2026-10-04 (OQ G-4); pure-C++, offline, keeps `/ToUnicode`; QPDF has no subsetter | fontTools (Python) — rejected (offline/pure-C++ constraint); QPDF-only — rejected (no subset API); vendored micro-subsetter — rejected (CJK/ToUnicode risk) |
+| 24 | Resampling | **Lanczos/bicubic in pixel domain before encode (header-only or small vendored resampler, Qt-free)** [new] | Phase 3 needs quality resample with no new runtime dep; implementation choice bounded by SSIM gates, offline, deterministic, no network | OpenCV — rejected (heavy dep); PDFium scale-on-render — rejected (changes print size semantics, not source pixels) |
+| 25 | Render-diff / benchmark | **Pure-C++ PDFium render-diff + bash TSV matrix** [existing] | Locked; extended with `PeakRSS` column (Phase 8) only | Python — rejected (locked) |
+| 26 | Password handling libs | **QPDF + PDFium password pass-through, no new lib** [existing] | Both already support passwords; only plumbing + GUI dialog is new | Keychain storage — rejected (out of scope; per-file prompt + env fallback locked) |
+| 27 | Platform | **macOS-only, Phases 1–8** [locked constraint] | OQ I-6; packaging = signed DMG; CI = macOS leg | Portable `gdate`/Linux fallbacks kept in scripts but no CI legs required |
+
 ## System Components
+
+### Phase 0 (retained)
 
 | Component | Status | Responsibility & Relations |
 |---|---|---|
@@ -96,12 +145,33 @@ Phase 0 hardens the verification baseline without touching the compression pipel
 | **Codec Layer (JpegCodec, Jp2Codec, PngCodec, ZlibCodec)** | [existing] | Thin RAII wrappers. PngCodec stays unselected in Phase 0. No new codecs. |
 | **CLI tools: `run_optimize`, `diagnose`** | [existing] | `run_optimize` flags already cover `--profile/--quality/--strip-*/--linearize/--no-flate-recompress/--no-dedup`; Phase 0 verifies, does not extend. |
 | **Test Harness (GTest + CTest)** | [existing] | `BUILD_TESTING=ON`, `gtest_discover_tests(pdfcompress_tests)`. No change except wiring. |
-| **TestCorpusGenerator** | [new/changed] | `tests/test_corpus_generator.cpp/.h` — only component changed in Phase 0. Stubs replaced with real QPDF dict construction for 14 deterministic types in `$TMPDIR/pdfcompress_test_corpus` via `QPDFWriter::setDeterministicID(true)`. Provides `generateWithForm`, `generateWithMetadata`, `generateWithJavaScript`, `generatePhotoHeavy`/`generateMultiImage`, `generateSharedXObject`/`generateMergedDuplicateFonts`, `generateLineArt`, `generateTransparency`, `generateEncrypted(test123)`, fixes `generateCmykImage` to use `/FlateDecode` with valid bytes. |
+| **TestCorpusGenerator** | [new/changed] | `tests/test_corpus_generator.cpp/.h` — only component changed in Phase 0. Stubs replaced with real QPDF dict construction for 14 deterministic types in `$TMPDIR/pdfcompress_test_corpus` via `QPDFWriter::setDeterministicID(true)`. |
 | **Corpus binary `generate_corpus`** | [existing] | `benchmark/generate_corpus.cpp` — invokes `TestCorpusGenerator::generateAll()`, prints `Corpus generated at:`; Phase 0 keeps behavior, benefits from corrected generator. |
 | **Benchmark script `run_benchmark.sh`** | [new/changed] | 5-tool matrix (pdfcompress, qpdf `--recompress`, gs ebook/screen, ocrmypdf) with `command -v` guards, SKIPPED vs FAILED, ms timing, idempotency filters, TSV header including SSIM/PSNR, calls render-diff helper, writes `benchmark_results_*.tsv` to cwd+build. |
-| **Render-diff helper `render_diff`** | [new] | `tools/render_diff.cpp` — takes two PDF paths, renders page 1 at 150 DPI via PDFium `FPDF_LoadDocument`→`FPDF_LoadPage`→`FPDFBitmap_Create`→`FPDF_RenderPageBitmap`→BGRA buffers, computes SSIM/PSNR in C++ (no Python). Returns `N/A` exit 0 if PDFium render unavailable; used by `run_benchmark.sh` per row. Keeps `core/` untouched. |
+| **Render-diff helper `render_diff`** | [new] | `tools/render_diff.cpp` — takes two PDF paths, renders page 1 at 150 DPI via PDFium, computes SSIM/PSNR in C++ (no Python). Returns `N/A N/A` exit 0 if PDFium render unavailable; used by `run_benchmark.sh` per row. Keeps `core/` untouched. |
+
+### Phases 1–8 (additions)
+
+| Component | Status | Responsibility & relations |
+|---|---|---|
+| GUI MainWindow + DropHandler/DropOverlay | [existing] | Picker/slider/checkboxes unchanged; gains batch view + cancel + summary (Ph.4) and password dialog + re-encrypt checkbox (Ph.7), all wired to off-thread worker |
+| Batch worker (QThreadPool + signals) | [new] | Owns per-file `optimize()` off UI thread, progress signals, cooperative cancel, partial-output rollback; later phases reuse it (password prompt bridging, `--jobs` pool sizing) |
+| `OptimizationOptions::forProfile` + strip/writer paths | [existing] | Normative defaults locked by tests in Ph.1; extended with new fields only (`targetDPI`, transcode/JBIG2/subset/password flags) — no semantic change to strip logic |
+| DecisionEngine routing | [new/changed] | Slider scoped to lossy classes; PNG branch for alpha + MaxQuality lossless; 1-bit→JBIG2 branch; CMYK preserve/transcode branch; each branch pinned by `TEST(DecisionEngine,…)` |
+| DPICalculator + Downsampler (focused new files in `core/`) | [new] | CTM→effective-DPI per image (fallback: page-size approx + log); Lanczos/bicubic resample honoring 300/150/96 targets, 32px floor, never-upscale; updates `/Width /Height` + CTM consistently |
+| `diagnose` effective-DPI column | [new/changed] | Reports per-image effective DPI (±5% gate source for AC-D1) |
+| Jbig2Codec (`ImageCodec` impl) | [new] | Wraps jbig2enc lossless default / `--jbig2-lossy` opt-in; size-guard + zlib fallback; disabled-with-warning when dep absent |
+| CmykHandler (preserve path + opt-in transcode path) | [new] | ICC/DeviceCMYK round-trip preservation; `--transcode-cmyk-to-rgb` conversion with ΔE sampling internally, SSIM≥0.98 as normative gate |
+| FontDedup + FontSubsetter (hb-subset wrapper) | [new] | Hash-join dedup with indirect-handle guard (ESC-001 pattern); subset ON Balanced/MaxCompression, OFF MaxQuality; AcroForm fonts exempt (dedup only); `/ToUnicode` preserved |
+| Password flow (GUI dialog + CLI `--password`/`PDFOPTIMIZE_PASSWORD` + re-encrypt) | [new] | Per-file prompt, no caching, never logged; decrypt→optimize→unencrypted default; `--re-encrypt` preserves AES-128 params |
+| Parallel page/image scheduler + RSS accounting | [new/changed] | `--jobs` (default core count), thread-local buffers, join-before-write determinism; `PeakRSS` sampling into TSV; `$TMPDIR` spill for OOM-risk files |
+| `run_optimize` new flags | [new/changed] | `--transcode-cmyk-to-rgb`, `--dpi/--no-downsample`, `--no-jbig2/--jbig2-lossy`, `--subset-fonts/--no-subset-fonts`, `--password/--re-encrypt`, `--jobs` |
+| Corpus (14 files) + staged fixtures | [existing] | Canonical 14 unchanged (requirements change needed for more); 1-bit scan, oversampled, tiny-icon, large-mixed fixtures staged in `$TMPDIR`, never committed |
+| Benchmark script + `render_diff` | [new/changed] | Gains `PeakRSS` column (Ph.8); per-phase before/after TSV comparison is the gate mechanism |
 
 ## Data Model
+
+### Phase 0 (retained)
 
 *All entities keep existing fields; Phase 0 only ensures corpus exercises keys that drive `OptimizationResult` counts.*
 
@@ -115,7 +185,19 @@ Phase 0 hardens the verification baseline without touching the compression pipel
 | `CorpusFile` *(logical)* | [new/changed] | 14 files in `$TMPDIR/pdfcompress_test_corpus`, AC3 1–14 authoritative: `text_only`, `photo_jpeg` (200×150 DCT), `photo_heavy` (multi-page 3 images), `screenshot_flat` (400×300 Flate flat quadrants), `line_art` (300×300 edge-heavy limited palette) **[new]**, `grayscale_scan` (300×400 Gray Flate), `monochrome_bw` (100×100 Gray), `with_form` (AcroForm+Widget) **[new/changed]**, `with_bookmarks_and_links` (Outlines+Annots+Dests) **[existing corrected]**, `with_javascript` (Names/JavaScript+OpenAction) **[new]**, `with_metadata` (Info+Metadata XMP+PieceInfo/Thumb) **[new/changed]**, `encrypted` (128-bit AES test123) **[new]**, `cmyk_image` (DeviceCMYK via Flate or valid JPEG) **[new/changed]**, `transparency`/`merged_duplicate_fonts` (SMask+shared XObject via same indirect object) **[new]** — see plan_notes RG-001 for 14-file interpretation. Deterministic via `setDeterministicID(true)`. |
 | `BenchmarkRow` *(TSV logical)* | [new] | `File | Original Size | Tool | Output Size | Reduction % | Time (ms) | SSIM | PSNR | Status` — one row per corpus PDF × per available tool (5 tools max). SSIM/PSNR = 3/1 decimals or `N/A`. |
 
+### Phases 1–8 (additions)
+
+| Entity | Status | Key fields / constraints |
+|---|---|---|
+| `OptimizationOptions` | [new/changed] | Existing fields unchanged; adds `targetDPI` (default per profile 300/150/96, `--dpi` override, `--no-downsample` disables), `transcodeCmykToRgb=false`, `useJbig2=true/lossy=false`, `subsetFonts` (per-profile matrix), `password` (never logged), `reEncrypt=false`, `jobs=coreCount` |
+| `OptimizationResult` | [new/changed] | Adds `transcodedCmyk`, `jbig2Images`, `fontsDeduplicated`, `fontsSubsetted`, `peakRssBytes`; existing counters unchanged |
+| `ImageMetadata` | [new/changed] | Adds `effectiveDpiX/Y` + `dpiSource` (CTM vs fallback) alongside existing page-approx `dpiX/dpiY`; `hasAlpha`, `bitsPerComponent`, `colorSpace` now drive PNG/JBIG2/CMYK branches |
+| `AnalysisResult`, `PDFDocumentInfo`, `CompressionParams` | [existing] | Unchanged (params `targetDPI` now actually consumed by downsampler) |
+| `BenchmarkRow` TSV | [new/changed] | Existing 9 columns + `PeakRSS` (Ph.8) |
+
 ## Integration Points
+
+### Phase 0 (retained)
 
 | Integration | Status | Purpose |
 |---|---|---|
@@ -127,7 +209,21 @@ Phase 0 hardens the verification baseline without touching the compression pipel
 | **libjpeg-turbo / OpenJPEG / libpng / zlib / libdeflate** | [existing] | Codec impl. No change. |
 | **GTest via vcpkg** | [existing] | `find_package(GTest CONFIG REQUIRED)`, `gtest_discover_tests`. |
 
+### Phases 1–8 (additions)
+
+| Integration | Status | Purpose |
+|---|---|---|
+| PDFium (inspect + render + password) | [existing] | Adds CTM/bounds queries for effective DPI + `FPDF_LoadDocument(password)` path |
+| QPDF (rewrite + password + deterministic write) | [existing] | Adds password pass-through, re-encrypt write, font-object walk for dedup/subset |
+| libjpeg-turbo / OpenJPEG / libpng / zlib | [existing] | PNG becomes live-selected; no version changes |
+| jbig2enc (Apache-2.0, optional) | [new] | 1-bit lossless/lossy encode; absent → warn + zlib fallback |
+| HarfBuzz hb-subset (required from Ph.6) | [new] | Embedded TTF/OTF subsetting with `/ToUnicode` intact |
+| `gs` / `ocrmypdf` / `qpdf` CLI comparators | [existing] | Unchanged benchmark role |
+| macOS packaging (signed DMG, entitlements, bundled `libpdfium.dylib`) | [new/changed] | Documented path; `.app` launches without `DYLD_*` |
+
 ## Non-Functional Approach
+
+### Phase 0 (retained)
 
 | Requirement | Approach |
 |---|---|
@@ -139,7 +235,20 @@ Phase 0 hardens the verification baseline without touching the compression pipel
 | **C++ hygiene** | RAII, no raw owning pointers, `pdfcompress_core` warnings clean `-Wall -Wextra -Wpedantic`. New `render_diff` helper follows same flags. New files in `tools/` + `tests/` + `benchmark/` only. |
 | **Observability** | `OptimizationResult` breakdown already in `main.cpp:252-278` and `run_optimize.cpp:144-159`; benchmark TSV adds per-tool Status column and `column -t` print. |
 
+### Phases 1–8 (additions)
+
+| Requirement | Approach |
+|---|---|
+| **Offline** (all phases) | No network in app/tests/benchmark; jbig2enc + HarfBuzz via vcpkg/vendored at configure time (same exception class as PDFium fetch) |
+| **Performance** | One-image-at-a-time kept; Ph.3 resample bounded by target DPI; Ph.8 `--jobs` parallelism + RSS cap (measure-first, lock-second) + `$TMPDIR` spill |
+| **Determinism** | `setDeterministicID` retained; Ph.8 AC-I2 (1-vs-4-jobs pixel-identical) gates parallelism; no run is larger silently (S2) |
+| **Security** | Passwords never logged/TSV'd; env fallback; 3-attempt GUI limit; re-encrypt preserves input AES-128 params; lossy-JBIG2 and CMYK-transcode both opt-in (safe defaults) |
+| **Accessibility/correctness** | S3 render gates + S4 text-identity (extract-before/after) enforced per phase; form fonts never subset; tiny-icon floor prevents legibility loss |
+| **Hygiene/UX** | RAII, `-Wall -Wextra` clean, reviewable diffs, `core/codecs/tools` layout, `USAGE.md` per change, GUI never blocked >100ms (QThreadPool + cancel) |
+
 ## Architecture Risks
+
+### Phase 0 (retained)
 
 | Risk | Severity | Mitigation |
 |---|---|---|
@@ -151,3 +260,15 @@ Phase 0 hardens the verification baseline without touching the compression pipel
 | `$TMPDIR` race (benchmark parses `Corpus generated at:`) | L | Script `grep -F 'Corpus generated at:' corpus_info.txt | awk -F'"' '{print $2}'` with fallback `CORPUS_DIR=${CORPUS_DIR:-$(./generate_corpus 2>&1 | ...)}`; create dir via `TestCorpusGenerator`. |
 | Over-scope creep into Phase C (PNG wiring, DecisionEngine slider fix) | L | Plan explicitly docs slider affects only lossy classes but does NOT implement fix; DecisionEngine change blocked to Phase C; validator enforces `git diff --stat` stays in `tests/`, `benchmark/`, `tools/render_diff*`, `CMakeLists.txt`. |
 
+### Phases 1–8 (additions)
+
+| Risk | Severity | Mitigation |
+|---|---|---|
+| CTM inaccurate for rotated/cropped images (H/M) | H | AC-D1 fixtures incl. rotation; fallback to page-approx + log; SSIM gate catches over-shrink |
+| Font subset breaks CJK/ToUnicode or form editing (H/M) | H | Never subset form fonts; CJK manual fixtures; byte-identical text-extraction gate; OFF for MaxQuality |
+| Password leaks into logs/dumps (H/L) | H | Never-log rule + code-review checklist; env path; `TEST` asserts no secret in stdout/TSV |
+| jbig2enc unavailable/fails to build (H/L) | H | Optional dep: configure warning + zlib fallback; accepted Apache-2.0 license |
+| Double-degrade: downsample + JPEG recompress (M/H) | M | Resample in pixel domain pre-encode; SSIM gates per phase |
+| QPDF handle races in parallel mode (M/M) | M | Thread-local buffers, join-before-write, AC-I2 determinism gate |
+| RSS cap unachievable without spill redesign (M/M) | M | Measure-first-then-lock; `$TMPDIR` spill allowed; cap is a plan step, not a guess |
+| Scope creep: target-size mode, JXL, Windows/Linux (M/L) | M | Locked OUT (OQ E-2/I-6); Validator rejects out-of-scope additions |

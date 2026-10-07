@@ -1,86 +1,178 @@
-# Plan Proposal — PDF Compressor Phase 0: Verification and Baseline
+# Plan Proposal — PDF Compressor Phases 1–8 (Goals B–I)
 
-## Phases (Phase 0 only — no Phases A–I detail)
+> Normative basis: `docs/requirements/requirements.md` Part II (Status: READY_FOR_PLAN) + standing
+> gates S1–S9 (applied to every phase below and not repeated per phase except the phase-specific
+> benchmark expectation). Phase numbering/names follow requirements.md exactly: Ph.1=B structure,
+> Ph.2=C codecs, Ph.3=D DPI, Ph.4=E batch UX, Ph.5=F JBIG2, Ph.6=G fonts, Ph.7=H passwords,
+> Ph.8=I perf/packaging. Target-size mode is NOT in scope in any phase (OQ E-2). macOS-only (OQ I-6).
 
-> Sequencing is coarser than Task Manager's task graph. Each phase groups work Task Manager will further decompose. All phases respect: `core/`, `codecs/`, `tools/` layout; modern C++20, RAII, warnings clean; offline; no behavior change to `src/core/PDFOptimizer.cpp` decision logic or `src/codecs/*`.
+## Phases
 
-### Phase 0.1 — Corpus Hardening (14 deterministic types, QPDF-only, TMPDIR)
+### Phase 1 (Goal B) — Structure & Profile-Defaults Verify-and-Complete
 
-- **Goal:** Replace the six stubs and missing types in `tests/test_corpus_generator.cpp/.h` so every AC3 logical type generates a real QPDF PDF with the dictionary keys that exercise the corresponding `PDFOptimizer` strip/skip path; keep storage ephemeral in `$TMPDIR/pdfcompress_test_corpus` and licensed-free.
-- **Covers:** AC3 (normative 14 types, QPDF-only, `$TMPDIR`, test password `test123` 128-bit AES), AC5 (no behavior change — only `tests/`/`benchmark/` changed), AC7 (encrypted fixture rejected gracefully without password, valid after `QPDF::processFile`), J1 steps 3 & 5 (corpus + Preview check), risks R1/R2/R3 in requirements.md; design_gaps #2 #5 #6 #7.
-- **Dependencies:** None — first phase; reads Appendix A verification report as ground truth.
+- **Goal:** Lock existing `forProfile` defaults and writer behavior with verifier tests; close doc
+  gaps only. No strip-semantics change (locked: MaxQuality-strips-nothing /
+  Balanced-strips-JS+metadata-only / MaxCompression-strips-everything, `linearize=false`).
+- **Requirements covered:** AC-B1 (defaults tests), AC-B2 (per-corpus stripping incl. non-JS
+  `/OpenAction` GoTo survival), AC-B3 (dedup/object-stream/Flate flags), AC-B4 (±2% benchmark gate);
+  J-B1, J-B2.
+- **Dependencies:** None (first; builds on locked Phase-0 baseline + 14-file corpus).
+- **Scope:** New `tests/test_profile_defaults.cpp` (`TEST(ProfileDefaults,…)` ×3 + CLI round-trip
+  for `--strip-*/--no-strip-*`, `--linearize/--no-flate-recompress/--no-dedup`); `/AA` +
+  non-JS `/OpenAction` handling completion; `--linearize` USAGE.md gap; no `DecisionEngine`/codec/DPI change.
+- **Per-phase gates:** Benchmark before/after within ±2% every row (no compression change expected);
+  manual PDFs: `with_form`, `with_bookmarks_and_links`, `with_javascript`, `with_metadata`,
+  `transparency`, `text_only` (no-growth control); S1–S9.
+- **STOP boundary:** STOP after verifier tests green + USAGE.md defaults table + both TSVs archived —
+  no Phase 2 work until AC-B1/B2/B3 pass and any default dispute is filed as a requirements change.
 
-**Scope (reviewable diff):**
-- `tests/test_corpus_generator.h/.cpp` — replace `generateWithForm()`, `generateWithMetadata()`, `generateWithJavaScript()`, `generateMultiImage()`→`generatePhotoHeavy()` (3 distinct images 300×200/200×150/250×180 multi-page), `generateSharedXObject()`→`generateMergedDuplicateFonts()` (shared indirect XObject via same `QPDFObjectHandle` reference on 2 pages), `generateLargeUncompressed()` (≥50KB Flate stream to avoid writer-overhead), add `generateLineArt()` (300×300 edge-heavy limited palette, Flate quadrants with high-contrast), `generateTransparency()` (SMask/alpha `/SMask << /S /Alpha >>` + `/Group << /S /Transparency >>`), `generateEncrypted()` (QPDF R6 AES-128 `test123`, no owner), add declared-but-missing `generateWithJavaScript()` impl. Fix `generateCmykImage()` to use `/FlateDecode` with real compressed bytes (or valid JPEG bytes) instead of raw DCTDecode (currently invalid JPEG, causes -1% growth). Apply `QPDFWriter::setDeterministicID(true)` in every generator. Update `generateAll()` to emit exactly 14 PDFs matching AC3 1–14 authoritative list; optionally emit `transparency.pdf` + `merged_duplicate_fonts.pdf` as 14th+15th but document that `merged_*` is counted as #14 per AC3 note — prefer exactly 14 to satisfy `ls *.pdf | wc -l == 14`.
-- `CMakeLists.txt` — no change except ensuring `generate_corpus` target still links `test_corpus_generator.cpp`.
-- `benchmark/generate_corpus.cpp` — keep (prints `Corpus generated at:`; Phase 0.1 benefits from it).
+### Phase 2 (Goal C) — Codec-Selection Correctness
 
-**Out of scope for this phase:** Any change to `PDFOptimizer.cpp` strip defaults, `DecisionEngine` wiring, DPI calc, codecs.
+- **Goal:** Scope slider to lossy classes, wire PNG for alpha/lossless, preserve CMYK correctly with
+  opt-in transcode.
+- **Requirements covered:** AC-C1 (slider lossy-only + `TEST(DecisionEngine, SliderOnlyAffectsLossyClasses)`),
+  AC-C2 (PNG for alpha/MaxQuality lossless, SSIM 1.0, `m_pngCodec` reachable), AC-C3 (CMYK preserved,
+  never corrupted), AC-C3b (`--transcode-cmyk-to-rgb` + GUI checkbox, SSIM≥0.98, `transcodedCmyk=1`),
+  AC-C4 benchmark gate; J-C1, J-C2.
+- **Dependencies:** Phase 1 (profile defaults locked first; routing builds on them).
+- **Scope:** `DecisionEngine.cpp` branch rework (lossy-only slider; PNG branch; ScannedText profile-driven,
+  Monochrome always lossless); new `CmykHandler` (ICC/DeviceCMYK preserve + Adobe APP14 safety +
+  skip-with-reason logging; opt-in transcode with internal ΔE sampling); `run_optimize --transcode-cmyk-to-rgb`;
+  GUI checkbox; USAGE.md slider/profile/CMYK docs.
+- **Per-phase gates:** Benchmark: screenshot/line-art MaxQuality rows change codec at SSIM 1.0, photos ±5%,
+  CMYK row reason-logged, all rows S2–S5; manual PDFs: `screenshot_flat`, `line_art`, `photo_jpeg`,
+  `transparency` (alpha), `cmyk_image`, `monochrome_bw` + `grayscale_scan` controls.
+- **STOP boundary:** STOP after AC-C1/C2/C3/C3b tests + CMYK Chrome+Preview visual check + TSV delta —
+  no downsampling work until codec routing is pinned (Phase 3 consumes its output dims).
 
-- **Verification gate:** `./build/generate_corpus | tee corpus_info.txt` then `ls $TMPDIR/pdfcompress_test_corpus/*.pdf | wc -l` == 14; each PDF passes `QPDF().processFile(path)`; key checks: `with_form.pdf` has `/AcroForm`, `with_bookmarks_and_links.pdf` has `/Outlines`+`/Annots`+`/Dests`, `with_javascript.pdf` has `/Names/JavaScript`+`/OpenAction`, `with_metadata.pdf` has `/Info`+`/Metadata`, `encrypted.pdf` has `isEncrypted==true` without password and optimizes to unencrypted with password `test123`, `cmyk_image.pdf` has `/DeviceCMYK` and optimizer `imagesSkipped==1`, `transparency.pdf` has `/SMask` or `/Group /Transparency`, `merged_duplicate_fonts.pdf` shares same object ID on 2 pages.
+### Phase 3 (Goal D) — Effective-DPI Downsampling
 
-### Phase 0.2 — Benchmark Hardening (valid QPDF invocation + 5-tool matrix + idempotency)
+- **Goal:** CTM-based effective DPI + profile-target downsampling with floor, print size unchanged.
+- **Requirements covered:** AC-D1 (`diagnose` effective-DPI column, 600-vs-150 ±5%,
+  `TEST(Inspector, EffectiveDpiFromCtm)`), AC-D2 (300/150/96 targets, 32px floor, never-upscale,
+  `--dpi/--no-downsample`), AC-D3 (≥20% on oversampled rows, ±3% at-target, ±2% text rows); J-D1.
+- **Dependencies:** Phase 2 (downsampler feeds the corrected codec path; dims change would confound
+  Phase-2 codec gates if reordered).
+- **Scope:** New `core/DPICalculator` (CTM extraction honoring crop/rotation; fallback + log) and
+  `core/Downsampler` (Lanczos/bicubic, floor, never-upscale/vector-exempt, `/Width /Height`+CTM update);
+  `diagnose` DPI column; CLI flags; USAGE.md targets/floor docs.
+- **Per-phase gates:** Benchmark gate AC-D3; manual PDFs: staged oversampled 600-DPI scan (in `$TMPDIR`,
+  not committed), `photo_heavy`, `grayscale_scan`, `line_art` (edge check), tiny-icon PDF (floor check).
+- **STOP boundary:** STOP after AC-D1/D2 fixtures (incl. rotation case) + oversampled ≥40% J-D1 check at
+  SSIM≥0.98 + TSV delta — later phases assume dims are final.
 
-- **Goal:** Make `benchmark/run_benchmark.sh` conform to Appendix B normative spec: correct QPDF invocation, full tool matrix with graceful degradation, pure-C++ timing/metrics, idempotency, TSV output.
-- **Covers:** AC4 (normative benchmark), AC5 (compare TSV before/after within ±1% pdfcompress rows), J3 (SKIPPED not FAILED, skip re-benchmark), design_gaps #4 #7, risk R2/R7.
-- **Dependencies:** Phase 0.1 (corpus must exist and be correct before benchmarking).
+### Phase 4 (Goal E) — GUI Batch UX: Progress, Cancel, Off-Thread, Stats
 
-**Scope (focused file):**
-- `benchmark/run_benchmark.sh` — `set -euo pipefail`, arg `BUILD_DIR` default `build`; pre-step `(cd "$BUILD_DIR" && ./generate_corpus) | tee corpus_info.txt` and parse `Corpus generated at:` for `CORPUS_DIR`; header `File\tOriginal Size\tTool\tOutput Size\tReduction %\tTime (ms)\tSSIM\tPSNR\tStatus`; loop `"$CORPUS_DIR"/*.pdf` skipping `*_optimized*` `*.qpdf*` `*.opt*` `*.gs*` `*.ocrmypdf*`; tools in order: 1) `pdfcompress` via `(cd "$BUILD_DIR" && ./run_optimize "$pdf")`, 2) `qpdf --recompress --compression-level=9 --object-streams=generate`, 3) `gs -sDEVICE=pdfwrite -dPDFSETTINGS=/ebook -dCompatibilityLevel=1.7 -dNOPAUSE -dBATCH -sOutputFile=`, 4) `gs ... /screen`, 5) `ocrmypdf --optimize 3 --skip-text` — each `command -v` guarded → `SKIPPED (not installed)` row; `orig_size` via `stat -f%z`/`stat -c%s`; `out_size` same; `reduction%` via `awk`/`bc`; wall time via `date +%s%3N` or `gdate` or `date +%s`×1000; output files `<name>.<tool>.pdf` alongside corpus; never overwrite input; wrap `run_optimize` with `|| true` so encrypted PDF doesn't abort `set -e`; write `benchmark_results_YYYYMMDD_HHMMSS.tsv` to cwd and `build/` and `column -t -s $'\t'`.
+- **Goal:** Responsive cancellable batch with per-file/total progress and before/after summary; existing
+  picker/slider/checkboxes untouched.
+- **Requirements covered:** AC-E1 (cancel ≤2s, no half-written output, loop never blocked >100ms),
+  AC-E2 (per-file bytes/%/profile + totals + `errorMessage` rows); J-E1 (incl. encrypted-without-password
+  row showing `FAILED (encrypted — password required)`).
+- **Dependencies:** Phases 1–3 (batch displays their result fields; stable single-file behavior first).
+- **Scope:** GUI-side only + thin worker: QThreadPool batch worker, progress signals, cancel with
+  finish-or-rollback, summary view, per-file error rows; no compression-logic change; USAGE.md flow docs.
+- **Per-phase gates:** Benchmark: no output-bytes change vs pre-Phase-4 (UI-only; rows within ±1%);
+  manual: 14-file batch incl. `encrypted.pdf` error path, mid-batch cancel, Preview+Chrome check.
+- **STOP boundary:** STOP after manual cancel-timing check + summary screenshot/TSV + S1–S9 — the worker/
+  cancel pattern is the template Phases 5–8 reuse, so it must be reviewed before codec/font/password
+  work lands on top.
 
-**Out of scope:** Pure-C++ SSIM/PSNR computation (Phase 0.3); slider/DecisionEngine docs are notes only.
+### Phase 5 (Goal F) — JBIG2 Monochrome
 
-- **Verification gate:** Run on machine with and without `gs`/`ocrmypdf`/`qpdf`; TSV has one row per tool per PDF; missing tools show `SKIPPED`; `qpdf` rows are no longer `FAILED`; `*_optimized*` files are not re-benchmarked; TSV header present; `ctest` still passes (script doesn't change `pdfcompress_core`).
+- **Goal:** True 1-bit images via lossless JBIG2 (jbig2enc, optional dep); 8-bit grayscale keeps zlib.
+- **Requirements covered:** AC-F1 (1-bit→JBIG2Decode ≤ zlib size; 8-bit→Flate; routing test),
+  AC-F2 (lossless default SSIM 1.0; `--jbig2-lossy` ≥0.99; failure→zlib/original + log), AC-F3 (1-bit row
+  ≥10% smaller at SSIM 1.0, others ±2%); J-F1 (incl. `--no-jbig2` override).
+- **Dependencies:** Phases 2 (routing point), 4 (batch shows `jbig2Images`/fallback reasons).
+- **Scope:** New `codecs/Jbig2Codec` (`ImageCodec` impl); vcpkg/vendored jbig2enc wiring with
+  configure-warn + disable path; `--no-jbig2/--jbig2-lossy` flags; `1-bit` fixture staged in `$TMPDIR`
+  (canonical 14 unchanged); USAGE.md licensing + policy docs.
+- **Per-phase gates:** Benchmark gate AC-F3; manual PDFs: staged true-1-bit scan (`/BitsPerComponent 1`),
+  `monochrome_bw` (8-bit control), `grayscale_scan` (JP2 control).
+- **STOP boundary:** STOP after 1-bit SSIM-1.0 + fallback-injection test + license note in USAGE.md —
+  lossy path must never be default; any license failure keeps zlib and is documented, not silent.
 
-### Phase 0.3 — Pure-C++ Render-Diff Hardening (PDFium, no Python)
+### Phase 6 (Goal G) — Font Dedup + Subsetting
 
-- **Goal:** Add a focused helper binary that renders page 1 at 150 DPI purely in C++ via PDFium and computes SSIM/PSNR in-process; wire it into `run_benchmark.sh` so every TSV row carries `SSIM`/`PSNR` or `N/A` with header note when PDFium unavailable — no Python dependency, per 2026-10-03 decision and feature_suggestions #1.
-- **Covers:** AC4 render-diff bullet (pure C++ PDFium, N/A fallback, no Python `scikit-image`), AC7 (d) SSIM thresholds ≥0.98 Balanced/MaxQuality, ≥0.95 MaxCompression — measured by this helper, `N/A` allowed only if PDFium unavailable; J1 step 4; Assumptions Log render-diff row.
-- **Dependencies:** Phase 0.2 (TSV columns already exist; this phase fills SSIM/PSNR).
+- **Goal:** Identical-font dedup + hb-subset subsetting (ON Balanced/MaxCompression, OFF MaxQuality)
+  with selectable text always intact.
+- **Requirements covered:** AC-G1 (single embedded copy, text-identical, `qpdf --check` clean),
+  AC-G2 (Balanced smaller + text-identical + `/ToUnicode` present; MaxQuality full program), AC-G3
+  (font-heavy rows shrink, image rows ±2%); J-G1 (form fonts exempt: dedup only + logged).
+- **Dependencies:** Phases 1 (structure baseline), 4 (batch reporting); independent of Phases 2–3–5
+  codec paths but sequenced after them to isolate benchmark deltas.
+- **Scope:** Font walker (AcroForm-reference detection for the subset exemption), hash-join dedup with
+  indirect-handle guard, `hb-subset` wrapper, `--subset-fonts/--no-subset-fonts` (profile-matrix defaults),
+  text-extraction identity checks in tests; USAGE.md behavior matrix.
+- **Per-phase gates:** Benchmark gate AC-G3; manual PDFs: merged-duplicate-fonts PDF, `text_only`,
+  `with_form` (field editing still works), large mixed-text + CJK fixture.
+- **STOP boundary:** STOP after text-identity diffs (before/after extraction) + Preview/Chrome tofu check +
+  TSV delta — any glyph loss or form breakage blocks Phases 7–8.
 
-**Scope (new logic in focused files only):**
-- **New file** `tools/render_diff.cpp` (preferred; alternative `benchmark/render_diff.cpp` — either is focused and reviewable) — C++20, RAII (`FPDF_DOCUMENT`, `FPDF_PAGE`, `FPDF_BITMAP` via unique_ptr with custom deleters), offline. API: `int main(argc, argv)` takes `original.pdf optimized.pdf`; uses `FPDF_InitLibraryWithConfig` → `FPDF_LoadDocument(path,nullptr)` → `FPDF_LoadPage(doc,0)` → `FPDF_GetPageWidth/Height` → 150 DPI bitmap size `w = pageWidthPt/72*150`, `h = pageHeightPt/72*150` → `FPDFBitmap_Create(w,h,0)` → `FPDFBitmap_FillRect(...0xFFFFFFFF)` → `FPDF_RenderPageBitmap(bitmap,page,0,0,w,h,0,0)` → read BGRA buffers for both PDFs → compute SSIM (windowed mean/variance/covariance, constants C1/C2 per standard) and PSNR (MSE→10*log10(255^2/MSE)) in C++. If either `FPDF_LoadDocument` fails (e.g., encrypted without password, missing dylib), print `N/A N/A` to stdout and exit 0 with note; never crash. No `python3`/`pip`/`scikit-image` invoked.
-- `CMakeLists.txt` — add `add_executable(render_diff tools/render_diff.cpp)` linked `PRIVATE pdfcompress_core pdfium` (or `qpdf::libqpdf` only if needed), placed under `if(BUILD_TESTING)` or alongside `diagnose` — either is minimal.
-- `benchmark/run_benchmark.sh` — after each tool's `run_tool` call, invoke `"$BUILD_DIR/render_diff" "$pdf" "$out_file"` (guarded: `if [ -x "$BUILD_DIR/render_diff" ]; then ... else SSIM=N/A PSNR=N/A; fi`) and fill TSV columns; header note `render-diff unavailable (PDFium C++ only)` if fallback.
-- Optional `tests/test_render_diff.cpp` (maps to feature_suggestions #1 — candidate for Task Manager to add as CTest `RenderDiff.SSIMThreshold` asserting SSIM≥0.98 on `text_only.pdf` pair) — leave to Task Manager; Phase 0 plan does not require it but architecture supports it.
+### Phase 7 (Goal H) — Encrypted PDFs: Password UX + Re-encryption
 
-**Design note — DecisionEngine slider fix (Phase C out of scope):**
-Per Appendix A claim 2 verdict PARTIAL/WRONG, the slider currently forces JPEG for Screenshot/LineArt (and Photo) but correctly does NOT affect Monochrome/ScannedText. Phase 0 does NOT change `DecisionEngine.cpp:51-71`; the plan documents that a correct fix (Phase C) will scope the slider to only lossy classes (Photo/Screenshot/LineArt) and wire PNG/zlib for MaxQuality without slider — but no code is proposed here. `git diff --stat` against master in this phase must show changes only in `tools/render_diff.cpp`, `CMakeLists.txt` (one-line add), and `benchmark/run_benchmark.sh`.
+- **Goal:** Per-file password prompt (GUI) + `--password`/`PDFOPTIMIZE_PASSWORD` (CLI); unencrypted output
+  by default; opt-in re-encrypt.
+- **Requirements covered:** AC-H1 (correct→unencrypted success; wrong/missing→`success=false` +
+  `errorMessage`, no crash/output), AC-H2 (`--re-encrypt` → still-encrypted, S2 holds); J-H1
+  (3-attempt inline error, batch continues, secret never logged).
+- **Dependencies:** Phase 4 (per-file dialog + batch-continue pattern); orthogonal to Phases 2–3–5–6
+  (decrypt happens before the shared optimize path).
+- **Scope:** GUI password dialog (per-file, cancellable, no caching), QPDF/PDFium password pass-through,
+  `--password/--re-encrypt` + env fallback, wrong-password `errorMessage` paths, GUI checkbox copy;
+  USAGE.md security notes (never-logged, test-`test123`-vs-production distinction).
+- **Per-phase gates:** Benchmark: corpus rows unchanged except `encrypted.pdf` (now optimizable with password);
+  manual PDFs: `encrypted.pdf` correct/wrong/missing + mixed batch; Preview open-with/without-password checks.
+- **STOP boundary:** STOP after wrong-password + missing-password + re-encrypt matrix + log/TSV secret-scan
+  (no secret present) — password handling must be audited before packaging/CI work.
 
-- **Verification gate:** `cmake --build` succeeds with `-Wall -Wextra -Wpedantic` clean; `./build/render_diff $TMPDIR/text_only.pdf $TMPDIR/text_only_optimized.pdf` prints `SSIM PSNR` or `N/A N/A`; `run_benchmark.sh` TSV now has SSIM/PSNR columns populated (or `N/A`); no Python process spawned (verify via `ps`/`strace`); existing 12+ tests still pass.
+### Phase 8 (Goal I) — Performance, Streaming, Packaging & CI Hardening
 
-### Phase 0.4 — Test Wiring & Acceptance Gating (CTest, verifier tests)
-
-- **Goal:** Ensure every new corpus type and benchmark metric is gated by CTest so a fresh checkout's `ctest --test-dir build --output-on-failure` is the single trusted baseline signal (J1/J2).
-- **Covers:** AC2 (GTest + CTest discover, `TEST(Suite,Case)` naming, one-line `CMakeLists.txt` add), AC3 verifier `QPDF::processFile` + key assertions, AC6 (CLI flags still listable), AC7 quality gates (valid PDF, size guard, text selectable, SSIM threshold).
-- **Dependencies:** Phases 0.1–0.3 (corpus, script, helper must exist to test).
-
-**Scope:**
-- `tests/test_corpus_generator.cpp` (already touched in 0.1) — add `TEST(CorpusGenerator, EachTypeHasExpectedKey)` style checks (14 tests or parameterized) that after `generateAll()` assert `#files==14` and per-file `hasKey` checks; keep `CMakeLists.txt` `add_executable(pdfcompress_tests ...)` one-line discipline.
-- Ensure `CMakeLists.txt` `enable_testing()` + `include(GoogleTest)` + `gtest_discover_tests(pdfcompress_tests)` remains; `BUILD_TESTING=ON` default.
-- Manual gate: `ctest --test-dir build --output-on-failure -V` → 14+ tests pass; `diagnose` and `run_optimize --help` still list flags; optimized PDFs `QPDF().processFile` succeed and `diagnose` shows fonts preserved.
-
-- **Verification gate:** `cmake -B build -DCMAKE_TOOLCHAIN_FILE=third_party/vcpkg/scripts/buildsystems/vcpkg.cmake && cmake --build build && ctest --test-dir build --output-on-failure` passes; `benchmark/run_benchmark.sh [build_dir]` completes with TSV; `git diff --stat` shows only `tests/`, `benchmark/`, `tools/render_diff*`, `CMakeLists.txt` (per AC5).
-
----
+- **Goal:** Memory-safe large files, deterministic parallelism, signed macOS packaging, green CI matrix.
+- **Requirements covered:** AC-I1 (≥200MB staged `$TMPDIR` file, peak RSS ≤ measured-then-locked cap,
+  TSV `PeakRSS` column), AC-I2 (`--jobs 1` vs `4` pixel-identical, SSIM 1.0), AC-I3 (clean-checkout CI
+  green, bundled `libpdfium.dylib`, DMG/signing documented, missing tools SKIPPED); J-I1 (`$TMPDIR` spill).
+- **Dependencies:** All Phases 1–7 (final hardening over the complete pipeline; RSS/parallelism measured
+  on final behavior).
+- **Scope:** Streaming discipline audit + `$TMPDIR` spill, `--jobs` scheduler (thread-local buffers,
+  join-before-write), RSS sampling + TSV column, macOS DMG/sign/entitlements docs, CI job
+  (corpus + benchmark + S1–S5); no compression-feature change (output bytes identical vs single-thread).
+- **Per-phase gates:** Full-corpus S1–S9 + determinism gate + RSS-cap gate; manual: ≥200MB mixed PDF
+  (staged, never committed), `photo_heavy` 1-vs-4, full 14-file CI matrix.
+- **STOP boundary:** STOP (program checkpoint) after CI green on clean checkout + RSS cap locked from
+  measurement + packaging verified on a second machine — release readiness, not just code-complete.
 
 ## Assumptions
 
-- QPDF `R6` AES-128 encryption API is available via `QPDFWriter::setR6Encryption` fallback to `setR3Encryption`; if headers differ, generator tries R6 first. (Not in requirements.md; discovered during inventory.)
-- `date +%s%3N` is not POSIX on macOS BSD `date`; benchmark will probe `gdate` (coreutils) then fallback to `date +%s` ×1000 so timing remains ms without assuming GNU date.
-- `bc` may be absent on minimal CI images; `awk` is used as fallback for `reduction%` calc (consistent with `arch` choice).
-- Corpus PDFs remain synthetic and licensed-free because they are built from QPDF `emptyPDF` + generated pixel buffers and Helvetica Type1 — no embedded third-party font/image is copied.
-- `libpdfium.dylib` is bundled in `build/` for both GUI and helper; if `DYLD_LIBRARY_PATH` / `@executable_path` is wrong on CI, render-diff degrades to `N/A` rather than failing the build.
-- The 14-file enumeration in AC3 is authoritative; if strict 14 is required, `merged_duplicate_fonts` coverage is embedded inside `transparency.pdf` via shared XObject + SMask on same PDF, otherwise two separate files with doc note still satisfy “14 logical types” — Task Manager will pick one interpretation and the verifier test will assert `==14`.
+- Phase ordering is benchmark-isolating: codec routing (2) → dims (3) → UI (4) → 1-bit (5) → fonts (6)
+  → passwords (7) → perf/packaging (8), so each TSV delta is attributable to one cause. (Not in
+  requirements.md; sequencing rationale.)
+- Staged fixtures beyond the canonical 14 (true-1-bit scan, oversampled 600-DPI, tiny-icon, ≥200MB mixed,
+  CJK) live in `$TMPDIR`, are never committed, and need no requirements change (consistent with the
+  `$TMPDIR`-ephemera constraint; design gap #10's locked direction).
+- Phase 8 RSS cap is measure-first-then-lock (≤1GB starting hypothesis per AC-I1); the measurement run
+  itself is a plan step, not a pre-declared pass/fail number.
+- Resampler choice (Lanczos vs bicubic) and CMYK ΔE sampling metric are implementation-side selections
+  bounded by SSIM gates (AC-C3b/AC-D3); Task Manager/Build choose within those bounds.
+- Phase numbering follows requirements.md Part II exactly (Ph.4 = Goal E batch UX). The task brief's
+  shorthand ("lossless-JPEG in Phase 4") is interpreted as Phase 2/4 existing AC (JPEG quality guard +
+  size guard), not a separate scope — no new phase is introduced.
 
 ## Flagged Issues
 
-| # | Requirement / Journey | Why it can't be satisfied as written | Suggested direction |
-|---|---|---|---|
-| F1 | AC3 — `transparency.pdf` + `merged_duplicate_fonts.pdf` counting | AC3 wording is self-contradictory: it lists 14 enumerated items where #14 “covers both alpha and duplicate-font” yet also says “generate both `transparency.pdf` and `merged_duplicate_fonts.pdf` and treat the latter as the 14th file” and later “alternatively generate 15 files and document…” — exact file count (`14` vs `15`) and naming cannot both be satisfied without an interpretation choice. | Task Manager + Validator should lock one interpretation (recommended: exactly 14 files where `transparency.pdf` contains both SMask and a shared XObject, so `merged_duplicate_fonts` case is covered without a 15th file). Validator should record the chosen count in `plan_notes.md` escalation per AC3 normative note. |
-| F2 | AC3 — `monochrome_bw.pdf` “1-bit concept” via DeviceGray 8-bit | AC3 defines monochrome as 100×100 DeviceGray (1-bit concept) but QPDF/`createPdfWithImage` uses 8 bpc Flate with 1 channel — true 1-bit `DeviceGray` with `/BitsPerComponent 1` and bit-packed data would need a different stream layout and test-corpus mirroring. Generating 8-bit grayscale is a valid classification trigger (≤4 colors) but not literally 1-bit. | Generate `monochrome_bw.pdf` with `/BitsPerComponent 1` and bit-packed 0/1 data via QPDF if feasible in Phase 0, otherwise keep 8-bit with ≤4 unique colors and document “1-bit concept exercised via ≤4 colors → Monochrome path” in plan_notes; true 1-bit bit-packing is not required for AC7 but should be noted. |
-| F3 | AC7 (d) — SSIM ≥0.98 threshold on synthetic corpus | Synthetic corpus images are uniform/flat (e.g., `screenshot_flat` quadrants, `grayscale_scan` solid gray) — any codec will yield SSIM≈1.0, so the threshold is trivially satisfied and does not prove perceptual quality on real PDFs. Real render-diff gating requires photo-heavy natural images. | Keep threshold as CI gate for Phase 0 (it will pass), but document that meaningful quality gating needs a future real-image corpus (Phase D+); consider adding one non-synthetic photo path using valid JPEG bytes of a tiny natural gradient to make the gate non-vacuous. |
-| F4 | AC3 — `generateCmykImage` DCTDecode vs FlateDecode | Design gap #6: `cmyk_image.pdf` currently uses DCTDecode with raw pixels (invalid JPEG) — QPDF stream is corrupt and optimizer skips it, so “CMYK skip/preserve” is not truly exercised. Fixing to FlateDecode changes the filter that `PDFOptimizer` will see, but `channels==4` path skips regardless of filter, so the fix is safe. | Replace with FlateDecode + `compress()` of CMYK bytes (as done for other types) per this plan; this validates the skip path without needing valid JPEG encoding. |
-| F5 | AC5 — `git diff --stat` within ±1% size delta on tiny PDFs | AC5 requires pdfcompress rows within ±1% before/after Phase 0, but the current 667-byte `text_only.pdf` shows -93% (writer overhead dominates). No behavior change can make writer overhead vanish; the ±1% bound cannot be met on tiny PDFs. | Corpus fix in Phase 0.1 should use larger realistic content (≥50KB) for benchmark-measured PDFs; AC5 gate should be evaluated on `photo_heavy`/`line_art` sized PDFs, not on `text_only`. Validator should exempt `<2KB` inputs from the ±1% check and rely on `imageBytesSaved` reporting per Constraints. |
+- **FI-1 — AC-E1 "event loop never blocked >100ms" is not machine-testable as written.**
+  Requirement/journey: Phase 4 AC-E1. Why unsatisfiable as written: no harness measures main-thread
+  block time; "verified by manual test + code inspection" cannot gate CI. Suggested direction: Validator
+  records an automated QTimer-watchdog self-test (or documents AC-E1's timing clause as manual-only with
+  code-inspection evidence) — surfaced here, not reinterpreted.
+- **FI-2 — Phase 6 form-font exemption lacks a specified detector.**
+  Requirement/journey: AC-G1/J-G1 ("form fonts never subset"). Why: requirements mandate the exemption
+  but no detection mechanism (AcroForm font-reference walk is the plan's chosen approach, not a specified
+  one). Suggested direction: accept AcroForm-reference walk + logged exemption as satisfying; if stricter
+  field-level provenance is required, file a requirements clarification.
+- **FI-3 — Phase 8 RSS cap is a target pending measurement, not a committable threshold.**
+  Requirement/journey: AC-I1. Why: "≤1GB default pending measurement" cannot be asserted until the first
+  large-file run. Suggested direction: keep AC-I1's measure-then-lock sequence as the normative path
+  (plan Phase 8 does this); Validator should treat a measured-and-documented cap as satisfying.
 
 Status: READY_FOR_VALIDATION
